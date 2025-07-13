@@ -21,7 +21,11 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pyinstaller yt-dlp pillow requests
+        pip install pyinstaller yt-dlp pillow requests autopep8
+
+    - name: Format Python code with autopep8
+      run: |
+        autopep8 --in-place --recursive .
 
     - name: Download and extract ffmpeg, ffplay, and ffprobe
       run: |
@@ -34,7 +38,7 @@ jobs:
         unzip ffprobe.zip -d ffmpeg
 
     - name: Remove FFmpeg zip files
-        shell:powershell
+      shell: powershell
       run: |
         Remove-Item -Path 'ffmpeg.zip', 'ffplay.zip', 'ffprobe.zip'
 
