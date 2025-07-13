@@ -1,0 +1,8 @@
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: "v1.${{ github.run_number }}"
+        name: "YouTube Downloader v1.${{ github.run_number }}"
+        files: dist/yt_downloader.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
