@@ -1,3 +1,4 @@
+import tkinter as tk
 def on_query():
     url = entry_url.get().strip()
     if not url:
