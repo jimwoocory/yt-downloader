@@ -13,20 +13,17 @@ steps:
       pip install pyinstaller yt-dlp pillow requests autopep8
 
   - name: Format Python code with autopep8
-    run: |
-      autopep8 --in-place --recursive .
+    run: autopep8 --in-place --recursive .
 
   - name: Download and extract FFmpeg
     run: |
       curl -L "https://github.com/jimwoocory/yt-downloader/releases/download/ffmpeg1/ffmpeg.zip" -o ffmpeg.zip
       mkdir ffmpeg
-      # 尝试使用 unzip 解压，如果 unzip 不存在则使用 tar 解压
-      unzip ffmpeg.zip -d ffmpeg || tar -xf ffmpeg.zip -C ffmpeg
+      unzip ffmpeg.zip -d ffmpeg
 
   - name: Remove FFmpeg zip file
     shell: powershell
-    run: |
-      Remove-Item -Path "ffmpeg.zip"
+    run: Remove-Item -Path "ffmpeg.zip"
 
   - name: Build EXE with PyInstaller
     run: |
