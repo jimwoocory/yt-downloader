@@ -11,10 +11,10 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
 
@@ -25,14 +25,14 @@ jobs:
 
     - name: Download icon
       run: |
-        Invoke-WebRequest -Uri "https://chat.openai.com/mnt/data/A_flat,_two-dimensional_digital_vector_icon_featur.png" -OutFile icon.ico
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/<your_user>/<your_repo>/main/icon.ico" -OutFile icon.ico
 
     - name: Build EXE with PyInstaller
       run: |
         pyinstaller --noconsole --onefile --icon=icon.ico yt_downloader.py
 
     - name: Upload EXE artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: yt_downloader_exe
         path: dist/yt_downloader.exe
