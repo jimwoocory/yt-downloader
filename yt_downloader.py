@@ -1,4 +1,15 @@
 import tkinter as tk
+
+root = tk.Tk()  # 创建主窗口对象
+root.title("Application Title")  # 设置窗口标题
+root.geometry("400x300")  # 设置窗口尺寸
+
+# 在这里添加 Tkinter 组件，例如按钮、标签等
+button = tk.Button(root, text="Click Me!")
+button.pack()
+
+# 开始主事件循环
+root.mainloop()
 def on_query():
     url = entry_url.get().strip()
     if not url:
