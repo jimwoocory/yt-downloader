@@ -30,20 +30,24 @@ jobs:
     - name: Download and extract ffmpeg, ffplay, and ffprobe
       run: |
         curl -L https://github.com/jimwoocory/yt-downloader/releases/download/ffmpeg1/ffmpeg.zip -o ffmpeg.zip
+        curl -L https://github.com/jimwoocory/yt-downloader/releases/download/ffmpeg1/ffplay.zip -o ffplay.zip
+        curl -L https://github.com/jimwoocory/yt-downloader/releases/download/ffmpeg1/ffprobe.zip -o ffprobe.zip
         mkdir ffmpeg
         unzip ffmpeg.zip -d ffmpeg
+        unzip ffplay.zip -d ffmpeg
+        unzip ffprobe.zip -d ffmpeg
 
-    - name: Remove FFmpeg zip file
+    - name: Remove FFmpeg zip files
       shell: powershell
       run: |
-        Remove-Item -Path 'ffmpeg.zip'
+        Remove-Item -Path 'ffmpeg.zip', 'ffplay.zip', 'ffprobe.zip'
 
     - name: Build EXE with PyInstaller
       run: |
         pyinstaller --onefile --noconsole --add-data "yt-dlp.exe;." --add-data "yt-dlp.conf;." --add-data "ffmpeg/ffmpeg.exe;ffmpeg" --add-data "ffmpeg/ffplay.exe;ffmpeg" --add-data "ffmpeg/ffprobe.exe;ffmpeg" --icon=icon.ico yt_downloader.py
-          
+
     - name: Upload EXE artifact
       uses: actions/upload-artifact@v4
       with:
         name: yt_downloader_exe
-        path: dist/yt_downloader.exe
+        path: dist/yt_downloader.exe 
