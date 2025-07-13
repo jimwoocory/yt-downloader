@@ -40,7 +40,13 @@ jobs:
 
     - name: Build EXE with PyInstaller
       run: |
-        pyinstaller --onefile --noconsole --add-data "yt-dlp.exe;." --add-data "yt-dlp.conf;." --add-data "ffmpeg/ffmpeg.exe;ffmpeg" --add-data "ffmpeg/ffplay.exe;ffmpeg" --add-data "ffmpeg/ffprobe.exe;ffmpeg" --icon=icon.ico yt_downloader.py
+        pyinstaller --onefile --noconsole `
+        --add-data "yt-dlp.exe;." `
+        --add-data "yt-dlp.conf;." `
+        --add-data "ffmpeg/ffmpeg.exe;ffmpeg" `
+        --add-data "ffmpeg/ffplay.exe;ffmpeg" `
+        --add-data "ffmpeg/ffprobe.exe;ffmpeg" `
+        --icon=icon.ico yt_downloader.py
 
     - name: Upload EXE artifact
       uses: actions/upload-artifact@v4
