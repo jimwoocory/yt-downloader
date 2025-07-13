@@ -1,139 +1,153 @@
-import yt_dlp
-import sys
-import os
-import tkinter as tk
-from tkinter import filedialog, simpledialog, messagebox
+  import yt_dlp
+  import sys
+  import os
+  import zipfile
+  import requests
+  from io import BytesIO
+  from tkinter import filedialog, simpledialog, messagebox
 
-def get_resource_path(relative_path):
-    """获取资源文件的绝对路径，兼容打包后的可执行文件"""
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
+  def get_resource_path(relative_path):
+      """获取资源文件的绝对路径，兼容打包后的可执行文件"""
+      try:
+          base_path = sys._MEIPASS
+      except Exception:
+          base_path = os.path.abspath(".")
+      return os.path.join(base_path, relative_path)
 
-def query_formats(url):
-    """查询视频的所有可用格式"""
-    ydl_opts = {
-        'socket_timeout': 10,
-        'proxy': None,
-    }
-    formats_info = ""
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info_dict = ydl.extract_info(url, download=False)
-        formats = info_dict.get('formats', [info_dict])
-        formats_info += f"\nAvailable formats for: {info_dict.get('title')}\n"
-        for f in formats:
-            formats_info += f"Format ID: {f['format_id']}, Ext: {f['ext']}, Resolution: {f.get('resolution', 'N/A')}, ACodec: {f.get('acodec')}, VCodec: {f.get('vcodec')}, Filesize: {f.get('filesize')}\n"
-    return formats_info
+  def download_ffmpeg():
+      """从 GitHub Releases 下载并解压 ffmpeg"""
+      release_url = 'https://github.com/yourusername/yourrepository/releases/download/v1.0.0/ffmpeg.zip'
+      response = requests.get(release_url)
+      if response.status_code == 200:
+          with zipfile.ZipFile(BytesIO(response.content)) as zip_ref:
+              zip_ref.extractall('ffmpeg')
+      else:
+          raise Exception("无法下载 ffmpeg")
 
-def download_video(url, format_id=None, size_limit=None):
-    """下载视频"""
-    ydl_opts = {
-        'socket_timeout': 10,
-        'proxy': None,
-        'format': format_id if format_id else 'best',
-        'outtmpl': '%(title)s.%(ext)s',
-        'noplaylist': True,
-        'max_filesize': size_limit * 1024 * 1024 if size_limit else None,
-        'ffmpeg_location': get_resource_path('ffmpeg/ffmpeg.exe'),
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
+  def query_formats(url):
+      """查询视频的所有可用格式"""
+      ydl_opts = {
+          'socket_timeout': 10,
+          'proxy': None,
+          'ffmpeg_location': get_resource_path('ffmpeg/ffmpeg.exe'),
+      }
+      formats_info = ""
+      with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+          info_dict = ydl.extract_info(url, download=False)
+          formats = info_dict.get('formats', [info_dict])
+          formats_info += f"\nAvailable formats for: {info_dict.get('title')}\n"
+          for f in formats:
+              formats_info += f"Format ID: {f['format_id']}, Ext: {f['ext']}, Resolution: {f.get('resolution', 'N/A')}, ACodec: {f.get('acodec')}, VCodec: {f.get('vcodec')}, Filesize: {f.get('filesize')}\n"
+      return formats_info
 
-def download_audio(url, format_id=None, size_limit=None):
-    """下载音频 (mp3)"""
-    ydl_opts = {
-        'socket_timeout': 10,
-        'proxy': None,
-        'format': format_id if format_id else 'bestaudio/best',
-        'outtmpl': '%(title)s.%(ext)s',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'noplaylist': True,
-        'max_filesize': size_limit * 1024 * 1024 if size_limit else None,
-        'ffmpeg_location': get_resource_path('ffmpeg/ffmpeg.exe'),
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
+  def download_video(url, format_id=None, size_limit=None):
+      """下载视频"""
+      ydl_opts = {
+          'socket_timeout': 10,
+          'proxy': None,
+          'format': format_id if format_id else 'best',
+          'outtmpl': '%(title)s.%(ext)s',
+          'noplaylist': True,
+          'max_filesize': size_limit * 1024 * 1024 if size_limit else None,
+          'ffmpeg_location': get_resource_path('ffmpeg/ffmpeg.exe'),
+      }
+      with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+          ydl.download([url])
 
-def run_gui():
-    root = tk.Tk()
-    root.title("YouTube Downloader")
-    root.geometry("500x300")
+  def download_audio(url, format_id=None, size_limit=None):
+      """下载音频 (mp3)"""
+      ydl_opts = {
+          'socket_timeout': 10,
+          'proxy': None,
+          'format': format_id if format_id else 'bestaudio/best',
+          'outtmpl': '%(title)s.%(ext)s',
+          'postprocessors': [{
+              'key': 'FFmpegExtractAudio',
+              'preferredcodec': 'mp3',
+              'preferredquality': '192',
+          }],
+          'noplaylist': True,
+          'max_filesize': size_limit * 1024 * 1024 if size_limit else None,
+          'ffmpeg_location': get_resource_path('ffmpeg/ffmpeg.exe'),
+      }
+      with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+          ydl.download([url])
 
-    def on_query():
-        url = entry_url.get()
-        if not url:
-            messagebox.showwarning("Warning", "请输入视频链接")
-            return
-        result = query_formats(url)
-        messagebox.showinfo("可用格式", result)
+  def run_gui():
+      root = tk.Tk()
+      root.title("YouTube Downloader")
+      root.geometry("500x300")
 
-    def on_download_video():
-        url = entry_url.get()
-        format_id = format_var.get()
-        size_limit = size_var.get()
-        try:
-            download_video(url, format_id, size_limit)
-            messagebox.showinfo("成功", "视频下载完成")
-        except Exception as e:
-            messagebox.showerror("错误", str(e))
+      def on_query():
+          url = entry_url.get()
+          if not url:
+              messagebox.showwarning("Warning", "请输入视频链接")
+              return
+          result = query_formats(url)
+          messagebox.showinfo("可用格式", result)
 
-    def on_download_audio():
-        url = entry_url.get()
-        format_id = format_var.get()
-        size_limit = size_var.get()
-        try:
-            download_audio(url, format_id, size_limit)
-            messagebox.showinfo("成功", "音频下载完成")
-        except Exception as e:
-            messagebox.showerror("错误", str(e))
+      def on_download_video():
+          url = entry_url.get()
+          format_id = format_var.get()
+          size_limit = size_var.get()
+          try:
+              download_video(url, format_id, size_limit)
+              messagebox.showinfo("成功", "视频下载完成")
+          except Exception as e:
+              messagebox.showerror("错误", str(e))
 
-    tk.Label(root, text="输入YouTube链接:").pack(pady=10)
-    entry_url = tk.Entry(root, width=60)
-    entry_url.pack(pady=5)
+      def on_download_audio():
+          url = entry_url.get()
+          format_id = format_var.get()
+          size_limit = size_var.get()
+          try:
+              download_audio(url, format_id, size_limit)
+              messagebox.showinfo("成功", "音频下载完成")
+          except Exception as e:
+              messagebox.showerror("错误", str(e))
 
-    tk.Label(root, text="选择视频格式:").pack(pady=5)
-    format_var = tk.StringVar()
-    format_menu = tk.OptionMenu(root, format_var, 'bestvideo', 'worstvideo', 'bestvideo*', 'worstvideo*')
-    format_menu.pack(pady=5)
+      tk.Label(root, text="输入YouTube链接:").pack(pady=10)
+      entry_url = tk.Entry(root, width=60)
+      entry_url.pack(pady=5)
 
-    tk.Label(root, text="选择文件大小限制 (MB):").pack(pady=5)
-    size_var = tk.StringVar()
-    size_menu = tk.OptionMenu(root, size_var, '50', '100', '200', '500')
-    size_menu.pack(pady=5)
+      tk.Label(root, text="选择视频格式:").pack(pady=5)
+      format_var = tk.StringVar()
+      format_menu = tk.OptionMenu(root, format_var, 'bestvideo', 'worstvideo', 'bestvideo*', 'worstvideo*')
+      format_menu.pack(pady=5)
 
-    tk.Button(root, text="查询格式", command=on_query).pack(pady=5)
-    tk.Button(root, text="下载视频", command=on_download_video).pack(pady=5)
-    tk.Button(root, text="下载音频(MP3)", command=on_download_audio).pack(pady=5)
+      tk.Label(root, text="选择文件大小限制 (MB):").pack(pady=5)
+      size_var = tk.StringVar()
+      size_menu = tk.OptionMenu(root, size_var, '50', '100', '200', '500')
+      size_menu.pack(pady=5)
 
-    root.mainloop()
+      tk.Button(root, text="查询格式", command=on_query).pack(pady=5)
+      tk.Button(root, text="下载视频", command=on_download_video).pack(pady=5)
+      tk.Button(root, text="下载音频(MP3)", command=on_download_audio).pack(pady=5)
 
-def main():
-    if len(sys.argv) == 1:
-        run_gui()
-    elif len(sys.argv) >= 3:
-        command = sys.argv[1]
-        url = sys.argv[2]
+      root.mainloop()
 
-        if command == "query":
-            print(query_formats(url))
-        elif command == "video":
-            format_id = sys.argv[3] if len(sys.argv) > 3 else None
-            download_video(url, format_id)
-        elif command == "audio":
-            download_audio(url)
-        else:
-            print("Invalid command. Use 'query', 'video', or 'audio'.")
-    else:
-        print("Usage:")
-        print("  python yt_downloader.py query <url>")
-        print("  python yt_downloader.py video <url> [format_id]")
-        print("  python yt_downloader.py audio <url>")
+  def main():
+      if len(sys.argv) == 1:
+          download_ffmpeg()
+          run_gui()
+      elif len(sys.argv) >= 3:
+          command = sys.argv[1]
+          url = sys.argv[2]
 
-if __name__ == '__main__':
-    main()
+          if command == "query":
+              print(query_formats(url))
+          elif command == "video":
+              format_id = sys.argv[3] if len(sys.argv) > 3 else None
+              download_video(url, format_id)
+          elif command == "audio":
+              download_audio(url)
+          else:
+              print("Invalid command. Use 'query', 'video', or 'audio'.")
+      else:
+          print("Usage:")
+          print("  python yt_downloader.py query <url>")
+          print("  python yt_downloader.py video <url> [format_id]")
+          print("  python yt_downloader.py audio <url>")
+
+  if __name__ == '__main__':
+      main()
