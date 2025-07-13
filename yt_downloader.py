@@ -1,10 +1,9 @@
+from pytube import YouTube
 import tkinter as tk
 from tkinter import messagebox
 from tkinter import ttk
 from tkinter import filedialog
-import subprocess
 import os
-import sys
 
 def select_output_folder():
     folder_selected = filedialog.askdirectory()
@@ -15,7 +14,6 @@ def download():
     url = url_entry.get()
     format_choice = format_var.get()
     output_folder = output_folder_var.get()
-    best_quality_format = 'bestvideo+bestaudio/best'
     
     if not url:
         messagebox.showwarning("Input Error", "Please enter a valid URL")
@@ -25,24 +23,17 @@ def download():
         messagebox.showwarning("Path Error", "Please select a valid download folder")
         return
     
-    output_template = os.path.join(output_folder, "%(title)s.%(ext)s")
-
     try:
-        messagebox.showinfo("Download started", f"Downloading {url} as {format_choice} to {output_folder}")
-        # Use full path to yt-dlp.exe if needed.
-        ydl_path = os.path.join(os.path.dirname(sys.executable), 'Scripts', 'yt-dlp.exe')
-
-        if format_choice == 'Video':
-            ydl_opts = [ydl_path, url, "-f", best_quality_format, "-o", output_template]
-        else:  # format_choice == 'Audio'
-            ydl_opts = [ydl_path, url, "-x", "--audio-format", "mp3", "-o", output_template]
-
-        result = subprocess.run(ydl_opts, capture_output=True, text=True)
+        yt = YouTube(url)
+        messagebox.showinfo("Download started", f"Downloading {yt.title} as {format_choice} to {output_folder}")
         
-        if result.returncode == 0:
-            messagebox.showinfo("Download complete", "Download successful!")
-        else:
-            messagebox.showerror("Error", f"Error downloading: {result.stderr}")
+        if format_choice == 'Video':
+            stream = yt.streams.get_highest_resolution()
+        else:  # format_choice == 'Audio'
+            stream = yt.streams.filter(only_audio=True).first()
+            
+        stream.download(output_folder)
+        messagebox.showinfo("Download complete", "Download successful!")
     except Exception as e:
         messagebox.showerror("Error", f"Error downloading: {e}")
 
