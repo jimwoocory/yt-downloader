@@ -32,7 +32,11 @@ jobs:
         unzip ffmpeg.zip -d ffmpeg
         unzip ffplay.zip -d ffmpeg
         unzip ffprobe.zip -d ffmpeg
-        rm ffmpeg.zip ffplay.zip ffprobe.zip
+
+        - name: Remove FFmpeg zip files
+  shell: pwsh
+  run: |
+    Remove-Item -Path 'ffmpeg.zip', 'ffplay.zip', 'ffprobe.zip'
 
     - name: Build EXE with PyInstaller
       run: |
