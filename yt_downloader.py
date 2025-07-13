@@ -4,11 +4,11 @@ from tkinter import ttk
 from tkinter import filedialog
 import subprocess
 import os
+import sys
 
 def select_output_folder():
     folder_selected = filedialog.askdirectory()
     output_folder_var.set(folder_selected)
-    # Update label displaying selected path
     output_folder_label.config(text=f"Selected Folder: {folder_selected}")
 
 def download():
@@ -25,16 +25,17 @@ def download():
         messagebox.showwarning("Path Error", "Please select a valid download folder")
         return
     
-    # Create output template with user-selected folder
     output_template = os.path.join(output_folder, "%(title)s.%(ext)s")
-    
+
     try:
         messagebox.showinfo("Download started", f"Downloading {url} as {format_choice} to {output_folder}")
-        
+        # Use full path to yt-dlp.exe if needed.
+        ydl_path = os.path.join(os.path.dirname(sys.executable), 'Scripts', 'yt-dlp.exe')
+
         if format_choice == 'Video':
-            ydl_opts = ["yt-dlp", url, "-f", best_quality_format, "-o", output_template]
+            ydl_opts = [ydl_path, url, "-f", best_quality_format, "-o", output_template]
         else:  # format_choice == 'Audio'
-            ydl_opts = ["yt-dlp", url, "-x", "--audio-format", "mp3", "-o", output_template]
+            ydl_opts = [ydl_path, url, "-x", "--audio-format", "mp3", "-o", output_template]
 
         result = subprocess.run(ydl_opts, capture_output=True, text=True)
         
@@ -59,7 +60,6 @@ format_choices = ['Video', 'Audio']
 format_dropdown = ttk.Combobox(root, textvariable=format_var, values=format_choices)
 format_dropdown.pack()
 
-# Output folder selection
 tk.Label(root, text="Select Output Folder:").pack()
 output_folder_var = tk.StringVar()
 output_folder_button = tk.Button(root, text="Select Folder", command=select_output_folder)
