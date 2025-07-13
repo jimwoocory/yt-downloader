@@ -1,11 +1,23 @@
 import yt_dlp
 import sys
+import os
 import tkinter as tk
 from tkinter import filedialog, simpledialog, messagebox
 
+def get_resource_path(relative_path):
+    """获取资源文件的绝对路径，兼容打包后的可执行文件"""
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
 def query_formats(url):
     """查询视频的所有可用格式"""
-    ydl_opts = {}
+    ydl_opts = {
+        'socket_timeout': 10,
+        'proxy': None,
+    }
     formats_info = ""
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=False)
@@ -15,25 +27,35 @@ def query_formats(url):
             formats_info += f"Format ID: {f['format_id']}, Ext: {f['ext']}, Resolution: {f.get('resolution', 'N/A')}, ACodec: {f.get('acodec')}, VCodec: {f.get('vcodec')}, Filesize: {f.get('filesize')}\n"
     return formats_info
 
-def download_video(url, format_id=None):
+def download_video(url, format_id=None, size_limit=None):
     """下载视频"""
     ydl_opts = {
+        'socket_timeout': 10,
+        'proxy': None,
         'format': format_id if format_id else 'best',
-        'outtmpl': '%(title)s.%(ext)s'
+        'outtmpl': '%(title)s.%(ext)s',
+        'noplaylist': True,
+        'max_filesize': size_limit * 1024 * 1024 if size_limit else None,
+        'ffmpeg_location': get_resource_path('ffmpeg/ffmpeg.exe'),
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
 
-def download_audio(url):
+def download_audio(url, format_id=None, size_limit=None):
     """下载音频 (mp3)"""
     ydl_opts = {
-        'format': 'bestaudio/best',
+        'socket_timeout': 10,
+        'proxy': None,
+        'format': format_id if format_id else 'bestaudio/best',
         'outtmpl': '%(title)s.%(ext)s',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
-        }]
+        }],
+        'noplaylist': True,
+        'max_filesize': size_limit * 1024 * 1024 if size_limit else None,
+        'ffmpeg_location': get_resource_path('ffmpeg/ffmpeg.exe'),
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
@@ -53,17 +75,20 @@ def run_gui():
 
     def on_download_video():
         url = entry_url.get()
-        fmt = simpledialog.askstring("格式ID", "请输入Format ID（可留空自动选择最佳）")
+        format_id = format_var.get()
+        size_limit = size_var.get()
         try:
-            download_video(url, fmt)
+            download_video(url, format_id, size_limit)
             messagebox.showinfo("成功", "视频下载完成")
         except Exception as e:
             messagebox.showerror("错误", str(e))
 
     def on_download_audio():
         url = entry_url.get()
+        format_id = format_var.get()
+        size_limit = size_var.get()
         try:
-            download_audio(url)
+            download_audio(url, format_id, size_limit)
             messagebox.showinfo("成功", "音频下载完成")
         except Exception as e:
             messagebox.showerror("错误", str(e))
@@ -71,6 +96,16 @@ def run_gui():
     tk.Label(root, text="输入YouTube链接:").pack(pady=10)
     entry_url = tk.Entry(root, width=60)
     entry_url.pack(pady=5)
+
+    tk.Label(root, text="选择视频格式:").pack(pady=5)
+    format_var = tk.StringVar()
+    format_menu = tk.OptionMenu(root, format_var, 'bestvideo', 'worstvideo', 'bestvideo*', 'worstvideo*')
+    format_menu.pack(pady=5)
+
+    tk.Label(root, text="选择文件大小限制 (MB):").pack(pady=5)
+    size_var = tk.StringVar()
+    size_menu = tk.OptionMenu(root, size_var, '50', '100', '200', '500')
+    size_menu.pack(pady=5)
 
     tk.Button(root, text="查询格式", command=on_query).pack(pady=5)
     tk.Button(root, text="下载视频", command=on_download_video).pack(pady=5)
