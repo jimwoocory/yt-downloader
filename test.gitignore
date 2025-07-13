@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# PyInstaller build folders
+build/
+dist/
+*.spec
+
+# Logs
+*.log
+
+# Executables
+*.exe
+*.dll
+*.so
