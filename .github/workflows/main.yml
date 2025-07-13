@@ -1,53 +1,45 @@
-name: Build YouTube Downloader EXE
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
 
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
+  - name: Set up Python
+    uses: actions/setup-python@v5
+    with:
+      python-version: '3.11'
 
-jobs:
-  build:
-    runs-on: windows-latest
+  - name: Install dependencies
+    run: |
+      python -m pip install --upgrade pip
+      pip install pyinstaller yt-dlp pillow requests autopep8
 
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+  - name: Format Python code with autopep8
+    run: |
+      autopep8 --in-place --recursive .
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+  - name: Download and extract FFmpeg
+    run: |
+      curl -L "https://github.com/jimwoocory/yt-downloader/releases/download/ffmpeg1/ffmpeg.zip" -o ffmpeg.zip
+      mkdir ffmpeg
+      # 尝试使用 unzip 解压，如果 unzip 不存在则使用 tar 解压
+      unzip ffmpeg.zip -d ffmpeg || tar -xf ffmpeg.zip -C ffmpeg
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install pyinstaller yt-dlp pillow requests autopep8
+  - name: Remove FFmpeg zip file
+    shell: powershell
+    run: |
+      Remove-Item -Path "ffmpeg.zip"
 
-    - name: Format Python code with autopep8
-      run: |
-        autopep8 --in-place --recursive .
+  - name: Build EXE with PyInstaller
+    run: |
+      pyinstaller --onefile --noconsole ^
+        --add-data "yt-dlp.exe;." ^
+        --add-data "yt-dlp.conf;." ^
+        --add-data "ffmpeg/ffmpeg.exe;ffmpeg" ^
+        --add-data "ffmpeg/ffplay.exe;ffmpeg" ^
+        --add-data "ffmpeg/ffprobe.exe;ffmpeg" ^
+        --icon=icon.ico yt_downloader.py
 
-    - name: Download and extract ffmpeg, ffplay, and ffprobe
-      run: |
-        curl -L https://github.com/jimwoocory/yt-downloader/releases/download/ffmpeg1/ffmpeg.zip -o ffmpeg.zip
-        curl -L https://github.com/jimwoocory/yt-downloader/releases/download/ffmpeg1/ffplay.zip -o ffplay.zip
-        curl -L https://github.com/jimwoocory/yt-downloader/releases/download/ffmpeg1/ffprobe.zip -o ffprobe.zip
-        mkdir ffmpeg
-        unzip ffmpeg.zip -d ffmpeg
-        unzip ffplay.zip -d ffmpeg
-        unzip ffprobe.zip -d ffmpeg
-
-    - name: Remove FFmpeg zip files
-      shell: powershell
-      run: |
-        Remove-Item -Path 'ffmpeg.zip', 'ffplay.zip', 'ffprobe.zip'
-
-    - name: Build EXE with PyInstaller
-      run: |
-        pyinstaller --onefile --noconsole --add-data "yt-dlp.exe;." --add-data "yt-dlp.conf;." --add-data "ffmpeg/ffmpeg.exe;ffmpeg" --add-data "ffmpeg/ffplay.exe;ffmpeg" --add-data "ffmpeg/ffprobe.exe;ffmpeg" --icon=icon.ico yt_downloader.py
-
-    - name: Upload EXE artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: yt_downloader_exe
-        path: dist/yt_downloader.exe
+  - name: Upload EXE artifact
+    uses: actions/upload-artifact@v4
+    with:
+      name: yt_downloader_exe
+      path: dist/yt_downloader.exe
