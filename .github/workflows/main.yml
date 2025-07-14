@@ -1,4 +1,4 @@
-name: Build Executable
+name: Build YouTube Downloader EXE
 
 on:
   push:
@@ -10,10 +10,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -23,10 +23,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller yt-dlp autopep8
 
-      - name: Format code with autopep8
-        run: autopep8 --in-place --aggressive --aggressive yt_downloader_upgraded.py
+      - name: Format Python code with autopep8
+        run: |
+          autopep8 --in-place --recursive .
 
-      - name: Download FFmpeg
+      - name: Download and extract FFmpeg
         run: |
           Invoke-WebRequest -Uri https://www.gyan.dev/ffmpeg/builds/ffmpeg-git-full.7z -OutFile ffmpeg.7z
           7z x ffmpeg.7z -o"ffmpeg"
@@ -36,12 +37,12 @@ jobs:
           Remove-Item -Path ffmpeg.7z -Force
           Remove-Item -Path ffmpeg -Recurse -Force
 
-      - name: Build executable with PyInstaller
+      - name: Build EXE with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --icon=icon.ico --name="YouTube Downloader" yt_downloader_upgraded.py
+          pyinstaller --onefile --noconsole --add-data "yt-dlp.exe;." --add-data "yt-dlp.conf;." --add-data "ffmpeg/ffmpeg.exe;ffmpeg" --add-data "ffmpeg/ffplay.exe;ffmpeg" --add-data "ffmpeg/ffprobe.exe;ffmpeg" --icon=icon.ico yt_downloader_upgraded.py
 
-      - name: Upload executable
+      - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
-          name: YouTube Downloader
-          path: dist/YouTube Downloader.exe
+          name: yt_downloader_exe
+          path: dist/yt_downloader.exe
