@@ -316,19 +316,19 @@ class YouTubeDownloaderApp:
     def _download(self, url, proxy, save_path, format_id, format_choice):
         """下载视频或音频的实际处理函数"""
         try:
-            ydl_opts = {
+            # 分离可序列化的配置选项和不可序列化的选项
+            serializable_opts = {
                 'socket_timeout': 10,
                 'proxy': proxy,
                 'format': format_id,
                 'outtmpl': f"{save_path}/%(title)s.%(ext)s",
                 'progress_hooks': [self.download_hook],
                 'quiet': True,
-                'no_warnings': True,
-                'logger': self.logger  # 将yt-dlp的日志输出到我们的日志系统
+                'no_warnings': True
             }
             
             if format_choice == "audio":
-                ydl_opts['postprocessors'] = [{
+                serializable_opts['postprocessors'] = [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
                     'preferredquality': '192',
@@ -338,10 +338,10 @@ class YouTubeDownloaderApp:
             import subprocess
             import tempfile
             
-            # 创建临时配置文件
+            # 创建临时配置文件，只保存可序列化的选项
             with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
                 import json
-                json.dump(ydl_opts, f)
+                json.dump(serializable_opts, f)
                 config_path = f.name
             
             # 构建命令
