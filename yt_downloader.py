@@ -322,7 +322,6 @@ class YouTubeDownloaderApp:
                 'proxy': proxy,
                 'format': format_id,
                 'outtmpl': f"{save_path}/%(title)s.%(ext)s",
-                'progress_hooks': [self.download_hook],
                 'quiet': True,
                 'no_warnings': True
             }
@@ -365,7 +364,8 @@ class YouTubeDownloaderApp:
             for line in self.download_process.stdout:
                 if not self.is_downloading:
                     break
-                self.logger.info(line.strip())
+                # 将日志行发送到GUI
+                self.result_queue.put(("info", line.strip()))
             
             # 等待进程完成
             self.download_process.wait()
