@@ -436,4 +436,4 @@ def main():
         print("命令行模式暂不支持，请直接运行程序")
 
 if __name__ == '__main__':
-    main()    
+    main()
