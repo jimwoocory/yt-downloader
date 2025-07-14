@@ -30,6 +30,9 @@ class YouTubeDownloaderApp:
         
         # 下载控制变量
         self.is_downloading = False
+        self.is_paused = False
+        self.download_cancelled = threading.Event()
+        self.ydl_instance = None  # 存储当前的YoutubeDL实例
         
         # 可用格式列表
         self.video_formats = []
@@ -74,6 +77,7 @@ class YouTubeDownloaderApp:
         self.url_entry.grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
         self.url_entry.insert(0, "https://www.youtube.com/watch?v=")
         self.url_entry.bind("<FocusOut>", self.on_url_changed)  # 焦点离开时自动查询格式
+        self.url_entry.bind("<KeyRelease>", self.on_url_changed)  # 按键释放时也检查URL
         
         ttk.Label(url_frame, text="代理地址 (可选):").grid(row=1, column=0, sticky=tk.W, pady=5)
         self.proxy_entry = ttk.Entry(url_frame, width=60)
@@ -118,11 +122,15 @@ class YouTubeDownloaderApp:
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=10)
         
-        ttk.Button(button_frame, text="开始下载", command=self.start_download, width=15).pack(side=tk.LEFT, padx=5)
+        self.start_button = ttk.Button(button_frame, text="开始下载", command=self.start_download, width=15)
+        self.start_button.pack(side=tk.LEFT, padx=5)
+        
         self.pause_button = ttk.Button(button_frame, text="暂停下载", command=self.pause_download, width=15, state=tk.DISABLED)
         self.pause_button.pack(side=tk.LEFT, padx=5)
+        
         self.stop_button = ttk.Button(button_frame, text="停止下载", command=self.stop_download, width=15, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, padx=5)
+        
         ttk.Button(button_frame, text="清空日志", command=self.clear_logs, width=15).pack(side=tk.LEFT, padx=5)
         
         # 下载进度和日志
@@ -139,13 +147,16 @@ class YouTubeDownloaderApp:
         self.log_text.tag_configure("success", foreground="green")
         self.log_text.tag_configure("info", foreground="black")
         self.log_text.tag_configure("progress", foreground="blue")
+        self.log_text.tag_configure("warning", foreground="orange")
     
     def on_url_changed(self, event=None):
         """URL变更时自动查询格式"""
         url = self.url_entry.get().strip()
-        if self.validate_url(url):
-            self.logger.info(f"检测到URL变更，自动查询格式: {url}")
-            self.query_formats()
+        
+        # 检查是否是有效的YouTube URL格式
+        if self.validate_url(url) and "youtube.com" in url or "youtu.be" in url:
+            # 延迟查询，避免频繁请求
+            self.root.after(500, self.query_formats)
     
     def browse_save_path(self):
         """浏览并选择保存路径"""
@@ -167,7 +178,6 @@ class YouTubeDownloaderApp:
         proxy = self.proxy_entry.get().strip() or None
         
         if not self.validate_url(url):
-            messagebox.showerror("错误", "请输入有效的 YouTube 链接")
             return
         
         self.logger.info(f"查询视频格式: {url}")
@@ -201,23 +211,58 @@ class YouTubeDownloaderApp:
         
         self.logger.info(f"开始下载: {url}")
         self.is_downloading = True
+        self.is_paused = False
+        self.download_cancelled.clear()
+        
+        # 更新按钮状态
+        self.start_button.config(state=tk.DISABLED)
         self.pause_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.NORMAL)
+        
         self.download_queue.put(("download", url, proxy, save_path, format_id, format_choice))
     
     def pause_download(self):
-        """暂停下载"""
-        if self.is_downloading:
-            self.logger.warning("当前版本不支持暂停功能，已停止下载")
-            self.stop_download()
+        """暂停/继续下载"""
+        if not self.is_downloading:
+            return
+            
+        if self.is_paused:
+            # 继续下载
+            self.is_paused = False
+            self.pause_button.config(text="暂停下载")
+            self.logger.info("继续下载...")
+        else:
+            # 暂停下载
+            self.is_paused = True
+            self.pause_button.config(text="继续下载")
+            self.logger.warning("下载已暂停")
     
     def stop_download(self):
         """停止下载"""
-        if self.is_downloading:
-            self.logger.info("停止下载...")
-            self.is_downloading = False
-            self.pause_button.config(state=tk.DISABLED)
-            self.stop_button.config(state=tk.DISABLED)
+        if not self.is_downloading:
+            return
+            
+        self.logger.info("停止下载...")
+        self.is_downloading = False
+        self.is_paused = False
+        self.download_cancelled.set()
+        
+        # 释放ydl实例
+        if self.ydl_instance:
+            try:
+                # 尝试关闭ydl实例
+                self.ydl_instance._downloader.ydl_opts['socket_timeout'] = 0.1
+            except Exception as e:
+                self.logger.error(f"关闭下载器时出错: {str(e)}")
+            finally:
+                self.ydl_instance = None
+        
+        # 更新按钮状态
+        self.start_button.config(state=tk.NORMAL)
+        self.pause_button.config(state=tk.DISABLED)
+        self.stop_button.config(state=tk.DISABLED)
+        
+        self.logger.warning("下载已停止")
     
     def process_queue(self):
         """处理下载队列"""
@@ -266,7 +311,7 @@ class YouTubeDownloaderApp:
                     self.video_formats = []
                     self.audio_formats = []
                     
-                    # 分类整理格式
+                    # 分类整理格式，排除包含"best"的选项
                     for f in formats:
                         format_id = f['format_id']
                         ext = f['ext']
@@ -274,6 +319,10 @@ class YouTubeDownloaderApp:
                         acodec = f.get('acodec', 'N/A')
                         vcodec = f.get('vcodec', 'N/A')
                         filesize = f.get('filesize', 'N/A')
+                        
+                        # 跳过包含"best"的格式
+                        if "best" in format_id.lower() or "best" in resolution.lower():
+                            continue
                         
                         # 判断是视频格式还是音频格式
                         if f.get('vcodec', 'none') != 'none':
@@ -321,6 +370,10 @@ class YouTubeDownloaderApp:
         """下载视频或音频的实际处理函数"""
         max_retries = 3
         for attempt in range(max_retries):
+            if self.download_cancelled.is_set():
+                self.logger.info("下载已取消")
+                return
+                
             try:
                 # 确保保存路径存在
                 os.makedirs(save_path, exist_ok=True)
@@ -335,6 +388,8 @@ class YouTubeDownloaderApp:
                     'no_warnings': True,
                     'progress_hooks': [self.download_hook],
                     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'external_downloader_args': ['-R', 'infinite'],  # 无限重试
+                    'noplaylist': True,  # 只下载单个视频，不下载播放列表
                 }
                 
                 if format_choice == "audio":
@@ -346,12 +401,37 @@ class YouTubeDownloaderApp:
                 
                 self.logger.info(f"开始下载到: {save_path} (尝试 {attempt+1}/{max_retries})")
                 
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
+                # 创建并保存YoutubeDL实例，以便可以控制下载
+                self.ydl_instance = yt_dlp.YoutubeDL(ydl_opts)
+                
+                # 自定义下载函数，支持暂停和停止
+                def custom_downloader(url):
+                    while True:
+                        if self.download_cancelled.is_set():
+                            raise Exception("下载已取消")
+                            
+                        if self.is_paused:
+                            time.sleep(0.5)  # 暂停时等待
+                            continue
+                            
+                        try:
+                            return self.ydl_instance.download([url])
+                        except Exception as e:
+                            if "interrupted" in str(e).lower() or "cancelled" in str(e).lower():
+                                raise  # 直接重新抛出取消异常
+                            self.logger.warning(f"下载过程中出错: {str(e)}，正在重试...")
+                            time.sleep(2)
+                
+                # 执行下载
+                custom_downloader(url)
                 
                 self.result_queue.put(("success", f"下载完成"))
                 return
             except Exception as e:
+                if "cancelled" in str(e).lower() or self.download_cancelled.is_set():
+                    self.result_queue.put(("warning", "下载已取消"))
+                    break
+                
                 if attempt < max_retries - 1:
                     self.logger.warning(f"下载尝试 {attempt+1}/{max_retries} 失败: {str(e)}，正在重试...")
                     time.sleep(5)  # 等待5秒后重试
@@ -360,11 +440,24 @@ class YouTubeDownloaderApp:
                     break
         finally:
             self.is_downloading = False
+            self.is_paused = False
+            self.ydl_instance = None
+            
+            # 更新按钮状态
+            self.root.after(0, lambda: self.start_button.config(state=tk.NORMAL))
             self.root.after(0, lambda: self.pause_button.config(state=tk.DISABLED))
+            self.root.after(0, lambda: self.pause_button.config(text="暂停下载"))
             self.root.after(0, lambda: self.stop_button.config(state=tk.DISABLED))
     
     def download_hook(self, d):
         """下载进度回调函数"""
+        if self.download_cancelled.is_set():
+            raise Exception("下载已取消")
+            
+        if self.is_paused:
+            # 暂停时不更新进度
+            return
+            
         if d['status'] == 'downloading':
             percent = d.get('_percent_str', '?')
             speed = d.get('_speed_str', '?')
@@ -388,6 +481,8 @@ class YouTubeDownloaderApp:
                     messagebox.showinfo("成功", result[1])
                 elif result[0] == "progress":
                     self._update_progress(result[1])
+                elif result[0] == "warning":
+                    self._append_log(f"警告: {result[1]}", "warning")
         except Exception as e:
             self._append_log(f"处理结果时出错: {str(e)}", "error")
         
