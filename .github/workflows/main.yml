@@ -41,7 +41,7 @@ jobs:
           pyinstaller --onefile --windowed --icon=icon.ico --name="YouTube Downloader" yt_downloader_upgraded.py
 
       - name: Upload executable
-        uses: actions/upload-artifact@v4  # 这里是关键修改，升级到 v4
+        uses: actions/upload-artifact@v4
         with:
           name: YouTube Downloader
           path: dist/YouTube Downloader.exe
