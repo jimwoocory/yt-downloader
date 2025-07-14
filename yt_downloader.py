@@ -28,7 +28,6 @@ class YouTubeDownloaderApp:
         
         # 下载控制变量
         self.is_downloading = False
-        self.download_process = None
         
         # 可用格式列表
         self.video_formats = []
@@ -77,16 +76,7 @@ class YouTubeDownloaderApp:
         ttk.Label(url_frame, text="代理地址 (可选):").grid(row=1, column=0, sticky=tk.W, pady=5)
         self.proxy_entry = ttk.Entry(url_frame, width=60)
         self.proxy_entry.grid(row=1, column=1, sticky=tk.W, pady=5, padx=5)
-        self.proxy_entry.insert(0, "http://127.0.0.1:7897")  # 修改默认代理地址
-        
-        # yt-dlp路径设置
-        ttk.Label(url_frame, text="yt-dlp路径:").grid(row=2, column=0, sticky=tk.W, pady=5)
-        self.yt_dlp_path_var = tk.StringVar(value="yt-dlp")
-        yt_dlp_path_frame = ttk.Frame(url_frame)
-        yt_dlp_path_frame.grid(row=2, column=1, sticky=tk.W, pady=5)
-        
-        ttk.Entry(yt_dlp_path_frame, textvariable=self.yt_dlp_path_var, width=50).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(yt_dlp_path_frame, text="浏览...", command=self.browse_yt_dlp_path).pack(side=tk.LEFT)
+        self.proxy_entry.insert(0, "http://127.0.0.1:7890")
         
         # 下载选项
         options_frame = ttk.LabelFrame(main_frame, text="下载选项", padding=10)
@@ -161,15 +151,6 @@ class YouTubeDownloaderApp:
         if directory:
             self.save_path_var.set(directory)
     
-    def browse_yt_dlp_path(self):
-        """浏览并选择yt-dlp可执行文件路径"""
-        filepath = filedialog.askopenfilename(
-            title="选择yt-dlp可执行文件",
-            filetypes=[("可执行文件", "*.exe"), ("所有文件", "*.*")]
-        )
-        if filepath:
-            self.yt_dlp_path_var.set(filepath)
-    
     def validate_url(self, url):
         """验证URL格式"""
         try:
@@ -182,55 +163,22 @@ class YouTubeDownloaderApp:
         """查询视频格式"""
         url = self.url_entry.get().strip()
         proxy = self.proxy_entry.get().strip() or None
-        yt_dlp_path = self.yt_dlp_path_var.get().strip()
         
         if not self.validate_url(url):
             messagebox.showerror("错误", "请输入有效的 YouTube 链接")
             return
         
-        # 检查yt-dlp路径是否存在
-        if not self.check_yt_dlp_path(yt_dlp_path):
-            return
-        
         self.logger.info(f"查询视频格式: {url}")
-        self.download_queue.put(("query", url, proxy, yt_dlp_path))
-    
-    def check_yt_dlp_path(self, path):
-        """检查yt-dlp路径是否有效"""
-        if not path:
-            messagebox.showerror("错误", "请设置yt-dlp路径")
-            return False
-        
-        # 检查是否是绝对路径
-        if os.path.isabs(path):
-            if not os.path.exists(path):
-                messagebox.showerror("错误", f"指定的yt-dlp路径不存在: {path}")
-                return False
-            if not os.access(path, os.X_OK):
-                messagebox.showerror("错误", f"指定的yt-dlp文件不可执行: {path}")
-                return False
-        else:
-            # 检查是否在PATH中
-            from shutil import which
-            if which(path) is None:
-                messagebox.showerror("错误", f"未找到yt-dlp程序。请确保yt-dlp已安装并添加到系统PATH中，或指定其完整路径。")
-                return False
-        
-        return True
+        self.download_queue.put(("query", url, proxy))
     
     def start_download(self):
         """开始下载视频或音频"""
         url = self.url_entry.get().strip()
         proxy = self.proxy_entry.get().strip() or None
         save_path = self.save_path_var.get()
-        yt_dlp_path = self.yt_dlp_path_var.get().strip()
         
         if not self.validate_url(url):
             messagebox.showerror("错误", "请输入有效的 YouTube 链接")
-            return
-        
-        # 检查yt-dlp路径是否存在
-        if not self.check_yt_dlp_path(yt_dlp_path):
             return
         
         # 获取选择的格式
@@ -253,19 +201,13 @@ class YouTubeDownloaderApp:
         self.is_downloading = True
         self.pause_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.NORMAL)
-        self.download_queue.put(("download", url, proxy, save_path, format_id, format_choice, yt_dlp_path))
+        self.download_queue.put(("download", url, proxy, save_path, format_id, format_choice))
     
     def pause_download(self):
         """暂停下载"""
         if self.is_downloading:
-            if self.download_process:
-                self.logger.info("尝试暂停下载...")
-                # 这里使用os.kill在Windows上模拟暂停/恢复比较困难
-                # 实际应用中可能需要更复杂的机制或使用支持暂停的下载库
-                self.logger.warning("当前版本不支持真正的暂停功能，已停止下载")
-                self.stop_download()
-            else:
-                self.logger.warning("没有正在运行的下载进程")
+            self.logger.warning("当前版本不支持暂停功能，已停止下载")
+            self.stop_download()
     
     def stop_download(self):
         """停止下载"""
@@ -274,16 +216,6 @@ class YouTubeDownloaderApp:
             self.is_downloading = False
             self.pause_button.config(state=tk.DISABLED)
             self.stop_button.config(state=tk.DISABLED)
-            
-            if self.download_process:
-                # 尝试终止下载进程
-                try:
-                    self.download_process.terminate()
-                    self.logger.info("下载已停止")
-                except Exception as e:
-                    self.logger.error(f"停止下载时出错: {str(e)}")
-                finally:
-                    self.download_process = None
     
     def process_queue(self):
         """处理下载队列"""
@@ -291,22 +223,23 @@ class YouTubeDownloaderApp:
             try:
                 task = self.download_queue.get(timeout=1)
                 if task[0] == "query":
-                    self._query_formats(task[1], task[2], task[3])
+                    self._query_formats(task[1], task[2])
                 elif task[0] == "download":
-                    self._download(task[1], task[2], task[3], task[4], task[5], task[6])
+                    self._download(task[1], task[2], task[3], task[4], task[5])
                 self.download_queue.task_done()
             except queue.Empty:
                 continue
             except Exception as e:
                 self.logger.error(f"处理任务时出错: {str(e)}")
     
-    def _query_formats(self, url, proxy, yt_dlp_path):
+    def _query_formats(self, url, proxy):
         """查询视频格式的实际处理函数"""
         try:
             ydl_opts = {
                 'socket_timeout': 10,
                 'proxy': proxy,
-                'quiet': True
+                'quiet': True,
+                'no_warnings': True
             }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -364,83 +297,42 @@ class YouTubeDownloaderApp:
             self.audio_format_combobox['values'] = ["未找到音频格式"]
             self.audio_format_combobox.current(0)
     
-    def _download(self, url, proxy, save_path, format_id, format_choice, yt_dlp_path):
+    def _download(self, url, proxy, save_path, format_id, format_choice):
         """下载视频或音频的实际处理函数"""
         try:
             # 确保保存路径存在
             os.makedirs(save_path, exist_ok=True)
             
-            # 分离可序列化的配置选项和不可序列化的选项
-            serializable_opts = {
+            # 配置选项
+            ydl_opts = {
                 'socket_timeout': 10,
                 'proxy': proxy,
                 'format': format_id,
                 'outtmpl': os.path.join(save_path, '%(title)s.%(ext)s'),
                 'quiet': True,
-                'no_warnings': True
+                'no_warnings': True,
+                'progress_hooks': [self.download_hook]
             }
             
             if format_choice == "audio":
-                serializable_opts['postprocessors'] = [{
+                ydl_opts['postprocessors'] = [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
                     'preferredquality': '192',
                 }]
             
-            # 创建一个子进程来执行下载，以便可以暂停/停止
-            import subprocess
-            import tempfile
+            self.logger.info(f"开始下载到: {save_path}")
             
-            # 创建临时配置文件，只保存可序列化的选项
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-                import json
-                json.dump(serializable_opts, f)
-                config_path = f.name
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
             
-            # 构建命令
-            cmd = [
-                yt_dlp_path,  # 使用用户指定的yt-dlp路径
-                '--config-location', config_path,
-                url
-            ]
-            
-            # 启动下载进程
-            self.download_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                universal_newlines=True,
-                cwd=save_path  # 设置工作目录为保存路径
-            )
-            
-            # 读取并记录输出
-            for line in self.download_process.stdout:
-                if not self.is_downloading:
-                    break
-                # 将日志行发送到GUI
-                self.result_queue.put(("info", line.strip()))
-            
-            # 等待进程完成
-            self.download_process.wait()
-            
-            # 清理临时文件
-            os.unlink(config_path)
-            
-            # 检查是否是被用户中断
-            if self.is_downloading:
-                self.result_queue.put(("success", f"下载完成"))
-            else:
-                self.result_queue.put(("info", f"下载已取消"))
-        
+            self.result_queue.put(("success", f"下载完成"))
         except Exception as e:
             self.result_queue.put(("error", f"下载失败: {str(e)}"))
         finally:
             self.is_downloading = False
             self.root.after(0, lambda: self.pause_button.config(state=tk.DISABLED))
             self.root.after(0, lambda: self.stop_button.config(state=tk.DISABLED))
-            self.download_process = None
     
     def download_hook(self, d):
         """下载进度回调函数"""
