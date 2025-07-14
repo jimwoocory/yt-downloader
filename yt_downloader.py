@@ -316,12 +316,15 @@ class YouTubeDownloaderApp:
     def _download(self, url, proxy, save_path, format_id, format_choice):
         """下载视频或音频的实际处理函数"""
         try:
+            # 确保保存路径存在
+            os.makedirs(save_path, exist_ok=True)
+            
             # 分离可序列化的配置选项和不可序列化的选项
             serializable_opts = {
                 'socket_timeout': 10,
                 'proxy': proxy,
                 'format': format_id,
-                'outtmpl': f"{save_path}/%(title)s.%(ext)s",
+                'outtmpl': os.path.join(save_path, '%(title)s.%(ext)s'),
                 'quiet': True,
                 'no_warnings': True
             }
@@ -336,6 +339,12 @@ class YouTubeDownloaderApp:
             # 创建一个子进程来执行下载，以便可以暂停/停止
             import subprocess
             import tempfile
+            import shutil
+            
+            # 检查yt-dlp是否存在
+            if not shutil.which('yt-dlp'):
+                self.result_queue.put(("error", "错误: 未找到yt-dlp程序。请确保yt-dlp已安装并添加到系统PATH中。"))
+                return
             
             # 创建临时配置文件，只保存可序列化的选项
             with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -357,7 +366,8 @@ class YouTubeDownloaderApp:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                universal_newlines=True
+                universal_newlines=True,
+                cwd=save_path  # 设置工作目录为保存路径
             )
             
             # 读取并记录输出
