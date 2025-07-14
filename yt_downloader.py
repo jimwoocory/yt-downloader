@@ -7,6 +7,8 @@ import logging
 import queue
 from urllib.parse import urlparse
 import os
+import time
+import requests
 
 class YouTubeDownloaderApp:
     def __init__(self, root):
@@ -76,7 +78,7 @@ class YouTubeDownloaderApp:
         ttk.Label(url_frame, text="代理地址 (可选):").grid(row=1, column=0, sticky=tk.W, pady=5)
         self.proxy_entry = ttk.Entry(url_frame, width=60)
         self.proxy_entry.grid(row=1, column=1, sticky=tk.W, pady=5, padx=5)
-        self.proxy_entry.insert(0, "http://127.0.0.1:7890")
+        self.proxy_entry.insert(0, "http://127.0.0.1:7897")  # 修改默认代理地址为7897端口
         
         # 下载选项
         options_frame = ttk.LabelFrame(main_frame, text="下载选项", padding=10)
@@ -234,52 +236,70 @@ class YouTubeDownloaderApp:
     
     def _query_formats(self, url, proxy):
         """查询视频格式的实际处理函数"""
-        try:
-            ydl_opts = {
-                'socket_timeout': 10,
-                'proxy': proxy,
-                'quiet': True,
-                'no_warnings': True
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                self.logger.info("正在获取视频信息...")
-                info_dict = ydl.extract_info(url, download=False)
-                formats = info_dict.get('formats', [info_dict])
+        # 测试代理连接
+        if proxy:
+            try:
+                proxies = {"http": proxy, "https": proxy}
+                response = requests.get("https://www.youtube.com", proxies=proxies, timeout=10)
+                if response.status_code != 200:
+                    self.logger.warning(f"代理连接可能有问题，状态码: {response.status_code}")
+            except Exception as e:
+                self.logger.warning(f"代理测试失败: {str(e)}")
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                ydl_opts = {
+                    'socket_timeout': 10,
+                    'proxy': proxy,
+                    'quiet': True,
+                    'no_warnings': True,
+                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                }
                 
-                # 清空格式列表
-                self.video_formats = []
-                self.audio_formats = []
-                
-                # 分类整理格式
-                for f in formats:
-                    format_id = f['format_id']
-                    ext = f['ext']
-                    resolution = f.get('resolution', 'N/A')
-                    acodec = f.get('acodec', 'N/A')
-                    vcodec = f.get('vcodec', 'N/A')
-                    filesize = f.get('filesize', 'N/A')
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    self.logger.info("正在获取视频信息...")
+                    info_dict = ydl.extract_info(url, download=False)
+                    formats = info_dict.get('formats', [info_dict])
                     
-                    # 判断是视频格式还是音频格式
-                    if f.get('vcodec', 'none') != 'none':
-                        # 视频格式
-                        self.video_formats.append(f"{format_id} - {resolution} ({ext})")
-                    else:
-                        # 音频格式
-                        self.audio_formats.append(f"{format_id} - {acodec} ({ext})")
+                    # 清空格式列表
+                    self.video_formats = []
+                    self.audio_formats = []
+                    
+                    # 分类整理格式
+                    for f in formats:
+                        format_id = f['format_id']
+                        ext = f['ext']
+                        resolution = f.get('resolution', 'N/A')
+                        acodec = f.get('acodec', 'N/A')
+                        vcodec = f.get('vcodec', 'N/A')
+                        filesize = f.get('filesize', 'N/A')
+                        
+                        # 判断是视频格式还是音频格式
+                        if f.get('vcodec', 'none') != 'none':
+                            # 视频格式
+                            self.video_formats.append(f"{format_id} - {resolution} ({ext})")
+                        else:
+                            # 音频格式
+                            self.audio_formats.append(f"{format_id} - {acodec} ({ext})")
+                    
+                    # 更新下拉菜单
+                    self.root.after(0, self.update_format_comboboxes)
+                    
+                    formats_info = f"\n可用格式 for: {info_dict.get('title')}\n"
+                    for f in self.video_formats:
+                        formats_info += f"视频: {f}\n"
+                    for f in self.audio_formats:
+                        formats_info += f"音频: {f}\n"
                 
-                # 更新下拉菜单
-                self.root.after(0, self.update_format_comboboxes)
-                
-                formats_info = f"\n可用格式 for: {info_dict.get('title')}\n"
-                for f in self.video_formats:
-                    formats_info += f"视频: {f}\n"
-                for f in self.audio_formats:
-                    formats_info += f"音频: {f}\n"
-            
-            self.result_queue.put(("info", formats_info))
-        except Exception as e:
-            self.result_queue.put(("error", f"查询格式失败: {str(e)}"))
+                self.result_queue.put(("info", formats_info))
+                return
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    self.logger.warning(f"尝试 {attempt+1}/{max_retries} 失败: {str(e)}，正在重试...")
+                    time.sleep(2)  # 等待2秒后重试
+                else:
+                    self.result_queue.put(("error", f"查询格式失败: {str(e)}"))
     
     def update_format_comboboxes(self):
         """更新格式下拉菜单"""
@@ -299,36 +319,45 @@ class YouTubeDownloaderApp:
     
     def _download(self, url, proxy, save_path, format_id, format_choice):
         """下载视频或音频的实际处理函数"""
-        try:
-            # 确保保存路径存在
-            os.makedirs(save_path, exist_ok=True)
-            
-            # 配置选项
-            ydl_opts = {
-                'socket_timeout': 10,
-                'proxy': proxy,
-                'format': format_id,
-                'outtmpl': os.path.join(save_path, '%(title)s.%(ext)s'),
-                'quiet': True,
-                'no_warnings': True,
-                'progress_hooks': [self.download_hook]
-            }
-            
-            if format_choice == "audio":
-                ydl_opts['postprocessors'] = [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }]
-            
-            self.logger.info(f"开始下载到: {save_path}")
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-            
-            self.result_queue.put(("success", f"下载完成"))
-        except Exception as e:
-            self.result_queue.put(("error", f"下载失败: {str(e)}"))
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # 确保保存路径存在
+                os.makedirs(save_path, exist_ok=True)
+                
+                # 配置选项
+                ydl_opts = {
+                    'socket_timeout': 10,
+                    'proxy': proxy,
+                    'format': format_id,
+                    'outtmpl': os.path.join(save_path, '%(title)s.%(ext)s'),
+                    'quiet': True,
+                    'no_warnings': True,
+                    'progress_hooks': [self.download_hook],
+                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                }
+                
+                if format_choice == "audio":
+                    ydl_opts['postprocessors'] = [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': '192',
+                    }]
+                
+                self.logger.info(f"开始下载到: {save_path} (尝试 {attempt+1}/{max_retries})")
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+                
+                self.result_queue.put(("success", f"下载完成"))
+                return
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    self.logger.warning(f"下载尝试 {attempt+1}/{max_retries} 失败: {str(e)}，正在重试...")
+                    time.sleep(5)  # 等待5秒后重试
+                else:
+                    self.result_queue.put(("error", f"下载失败: {str(e)}"))
+                    break
         finally:
             self.is_downloading = False
             self.root.after(0, lambda: self.pause_button.config(state=tk.DISABLED))
