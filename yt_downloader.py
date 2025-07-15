@@ -12,6 +12,9 @@ from datetime import datetime
 import json
 import subprocess
 import platform
+import ffmpeg
+import tempfile
+import requests
 
 class YouTubeDownloaderApp:
     def __init__(self, root):
@@ -40,6 +43,9 @@ class YouTubeDownloaderApp:
         # 视频信息缓存
         self.video_info = {}
         
+        # 可用格式信息
+        self.available_formats = {}
+        
         # 配置日志
         self.setup_logging()
         
@@ -60,6 +66,9 @@ class YouTubeDownloaderApp:
         self.ydl_instance = None
         self.is_downloading = False
         self.download_threads = {}  # 跟踪所有下载线程
+        
+        # 自动获取或下载ffmpeg
+        self.ffmpeg_path = self._get_ffmpeg_path()
     
     def setup_logging(self):
         """配置日志系统，将日志输出到GUI"""
@@ -71,6 +80,83 @@ class YouTubeDownloaderApp:
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         self.log_handler.setFormatter(formatter)
         self.logger.addHandler(self.log_handler)
+    
+    def _get_ffmpeg_path(self):
+        """自动检测或下载FFmpeg二进制文件"""
+        # 检查系统路径中是否已安装ffmpeg
+        if self._check_ffmpeg_exists():
+            self.logger.info("在系统路径中找到FFmpeg")
+            return "ffmpeg"  # 使用系统安装的ffmpeg
+            
+        # 创建临时目录存放ffmpeg
+        temp_dir = tempfile.gettempdir()
+        ffmpeg_dir = os.path.join(temp_dir, "ffmpeg_bin")
+        os.makedirs(ffmpeg_dir, exist_ok=True)
+        
+        # 根据操作系统下载对应的ffmpeg二进制文件
+        if platform.system() == "Windows":
+            ffmpeg_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+            ffmpeg_path = os.path.join(ffmpeg_dir, "ffmpeg.exe")
+        elif platform.system() == "Darwin":  # macOS
+            ffmpeg_url = "https://evermeet.cx/ffmpeg/ffmpeg-latest.zip"
+            ffmpeg_path = os.path.join(ffmpeg_dir, "ffmpeg")
+        else:  # Linux
+            ffmpeg_url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+            ffmpeg_path = os.path.join(ffmpeg_dir, "ffmpeg")
+        
+        # 如果文件不存在，则下载
+        if not os.path.exists(ffmpeg_path):
+            self.logger.info(f"下载FFmpeg到: {ffmpeg_path}")
+            try:
+                self._download_ffmpeg(ffmpeg_url, ffmpeg_dir)
+                # 添加执行权限
+                if platform.system() != "Windows":
+                    os.chmod(ffmpeg_path, 0o755)
+                self.logger.info("FFmpeg下载完成")
+            except Exception as e:
+                self.logger.error(f"下载FFmpeg失败: {str(e)}")
+                return None
+                
+        return ffmpeg_path
+        
+    def _check_ffmpeg_exists(self):
+        """检查系统中是否存在ffmpeg"""
+        try:
+            subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            return True
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return False
+            
+    def _download_ffmpeg(self, url, target_dir):
+        """下载并解压FFmpeg二进制文件"""
+        # 下载文件
+        filename = os.path.basename(urlparse(url).path)
+        download_path = os.path.join(target_dir, filename)
+        
+        self.logger.info(f"开始下载FFmpeg，文件大小约100MB，请稍候...")
+        
+        with requests.get(url, stream=True) as r:
+            r.raise_for_status()
+            with open(download_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        
+        self.logger.info(f"FFmpeg下载完成，正在解压...")
+        
+        # 解压文件
+        if filename.endswith('.zip'):
+            import zipfile
+            with zipfile.ZipFile(download_path, 'r') as zip_ref:
+                zip_ref.extractall(target_dir)
+        elif filename.endswith(('.tar.gz', '.tar.xz')):
+            import tarfile
+            with tarfile.open(download_path, 'r') as tar_ref:
+                tar_ref.extractall(target_dir)
+                
+        # 清理下载的压缩文件
+        os.remove(download_path)
+        
+        self.logger.info(f"FFmpeg准备就绪")
     
     def create_widgets(self):
         """创建GUI界面组件"""
@@ -129,35 +215,49 @@ class YouTubeDownloaderApp:
         # 下载格式预设 - 分开视频和音频选项
         ttk.Label(options_frame, text="视频格式:").grid(row=1, column=0, sticky=tk.W, pady=5)
         self.video_format_var = tk.StringVar(value="bestvideo")
+        self.video_format_manual = tk.StringVar()
         
-        video_formats = [
+        video_frame = ttk.Frame(options_frame)
+        video_frame.grid(row=1, column=1, sticky=tk.W, pady=5)
+        
+        # 视频格式下拉菜单
+        self.video_format_combo = ttk.Combobox(video_frame, textvariable=self.video_format_var, width=30)
+        self.video_format_combo['values'] = [
+            ("自动选择", "bestvideo"),
             ("最高质量视频", "bestvideo"),
             ("720p 视频", "best[height<=720]"),
             ("480p 视频", "best[height<=480]"),
             ("360p 视频", "best[height<=360]"),
             ("无视频", "none")
         ]
+        self.video_format_combo.current(0)
+        self.video_format_combo.pack(side=tk.LEFT, padx=(0, 5))
         
-        video_frame = ttk.Frame(options_frame)
-        video_frame.grid(row=1, column=1, sticky=tk.W, pady=5)
-        
-        for i, (text, value) in enumerate(video_formats):
-            ttk.Radiobutton(video_frame, text=text, variable=self.video_format_var, value=value).grid(row=i//4, column=i%4, sticky=tk.W, padx=5, pady=2)
+        # 手动输入格式ID
+        ttk.Label(video_frame, text="手动ID:").pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Entry(video_frame, textvariable=self.video_format_manual, width=10).pack(side=tk.LEFT)
         
         ttk.Label(options_frame, text="音频格式:").grid(row=2, column=0, sticky=tk.W, pady=5)
         self.audio_format_var = tk.StringVar(value="bestaudio")
-        
-        audio_formats = [
-            ("最高质量音频", "bestaudio"),
-            ("MP3 音频", "bestaudio"),
-            ("无音频", "none")
-        ]
+        self.audio_format_manual = tk.StringVar()
         
         audio_frame = ttk.Frame(options_frame)
         audio_frame.grid(row=2, column=1, sticky=tk.W, pady=5)
         
-        for i, (text, value) in enumerate(audio_formats):
-            ttk.Radiobutton(audio_frame, text=text, variable=self.audio_format_var, value=value).grid(row=i//4, column=i%4, sticky=tk.W, padx=5, pady=2)
+        # 音频格式下拉菜单
+        self.audio_format_combo = ttk.Combobox(audio_frame, textvariable=self.audio_format_var, width=30)
+        self.audio_format_combo['values'] = [
+            ("自动选择", "bestaudio"),
+            ("最高质量音频", "bestaudio"),
+            ("MP3 音频", "bestaudio"),
+            ("无音频", "none")
+        ]
+        self.audio_format_combo.current(0)
+        self.audio_format_combo.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # 手动输入格式ID
+        ttk.Label(audio_frame, text="手动ID:").pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Entry(audio_frame, textvariable=self.audio_format_manual, width=10).pack(side=tk.LEFT)
         
         # 字幕选项
         self.subtitle_var = tk.BooleanVar(value=False)
@@ -288,7 +388,75 @@ class YouTubeDownloaderApp:
             return
             
         self.logger.info(f"查询视频格式: {url}")
-        self.download_queue.put(("query", url, proxy))
+        
+        def _query():
+            try:
+                ydl_opts = {
+                    'socket_timeout': 10,
+                    'proxy': proxy,
+                    'quiet': True
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    self.logger.info("正在获取视频信息...")
+                    info_dict = ydl.extract_info(url, download=False)
+                    formats = info_dict.get('formats', [info_dict])
+                    
+                    # 解析并存储可用格式
+                    video_formats = []
+                    audio_formats = []
+                    
+                    for f in formats:
+                        format_id = f['format_id']
+                        ext = f['ext']
+                        resolution = f.get('resolution', 'N/A')
+                        acodec = f.get('acodec', 'N/A')
+                        vcodec = f.get('vcodec', 'N/A')
+                        
+                        # 区分视频和音频格式
+                        if resolution != 'audio only' and vcodec != 'none':
+                            video_formats.append((f"{format_id} ({resolution}, {ext})", format_id))
+                        elif acodec != 'none':
+                            audio_formats.append((f"{format_id} ({acodec}, {ext})", format_id))
+                    
+                    # 更新下拉菜单选项
+                    self.available_formats[url] = {
+                        'video': video_formats,
+                        'audio': audio_formats
+                    }
+                    
+                    # 设置下拉菜单选项
+                    video_combo_values = [("自动选择", "bestvideo")] + video_formats
+                    self.video_format_combo['values'] = video_combo_values
+                    if len(video_combo_values) > 0:
+                        self.video_format_combo.current(0)
+                    
+                    audio_combo_values = [("自动选择", "bestaudio")] + audio_formats
+                    self.audio_format_combo['values'] = audio_combo_values
+                    if len(audio_combo_values) > 0:
+                        self.audio_format_combo.current(0)
+                    
+                    # 显示格式信息
+                    formats_info = f"\n可用格式 for: {info_dict.get('title')}\n"
+                    for f in formats:
+                        format_id = f['format_id']
+                        ext = f['ext']
+                        resolution = f.get('resolution', 'N/A')
+                        acodec = f.get('acodec', 'N/A')
+                        vcodec = f.get('vcodec', 'N/A')
+                        filesize = f.get('filesize', 'N/A')
+                        
+                        # 只显示常见的格式
+                        if (ext in ['mp4', 'webm', 'mkv', 'flv', 'avi'] and resolution != 'audio only') or \
+                           (acodec != 'none' and resolution == 'audio only'):
+                            formats_info += f"ID: {format_id}, 格式: {ext}, 分辨率: {resolution}, 音频: {acodec}, 视频: {vcodec}, 大小: {filesize}\n"
+                
+                self.result_queue.put(("info", formats_info))
+            except Exception as e:
+                self.result_queue.put(("error", f"查询格式失败: {str(e)}"))
+        
+        # 在单独线程中查询格式
+        threading.Thread(target=_query, daemon=True).start()
     
     def start_download(self):
         """开始下载视频或音频"""
@@ -310,14 +478,15 @@ class YouTubeDownloaderApp:
         
         proxy = self.proxy_entry.get().strip() or None
         save_path = self.save_path_var.get()
-        video_format = self.video_format_var.get()
-        audio_format = self.audio_format_var.get()
         download_subtitles = self.subtitle_var.get()
         thread_count = int(self.threads_var.get())
         transcode = self.transcode_var.get()
         transcode_format = self.transcode_format.get()
         
         # 确定最终使用的格式ID
+        video_format = self.video_format_manual.get() or self.video_format_var.get()
+        audio_format = self.audio_format_manual.get() or self.audio_format_var.get()
+        
         if video_format == "none" and audio_format != "none":
             format_id = audio_format
         elif audio_format == "none" and video_format != "none":
@@ -456,8 +625,8 @@ class YouTubeDownloaderApp:
                 (format_id.lower().startswith('audio') or format_id == 'bestaudio')  # 音频提取需要ffmpeg
             )
             
-            if needs_ffmpeg and not self.check_ffmpeg():
-                raise RuntimeError("需要ffmpeg来合并格式或提取音频，但未找到ffmpeg。请安装ffmpeg并确保其在系统PATH中。")
+            if needs_ffmpeg and not self.ffmpeg_path:
+                raise RuntimeError("需要FFmpeg来合并格式或提取音频，但未找到FFmpeg。")
             
             ydl_opts = {
                 'socket_timeout': 10,
@@ -473,6 +642,11 @@ class YouTubeDownloaderApp:
                 'subtitleslangs': ['en', 'zh-Hans', 'zh-Hant'],  # 下载多种语言字幕
                 'concurrent_fragments': thread_count  # 多线程下载
             }
+            
+            # 使用自动获取的ffmpeg路径
+            if self.ffmpeg_path:
+                ydl_opts['ffmpeg_location'] = self.ffmpeg_path
+                self.logger.info(f"使用FFmpeg路径: {self.ffmpeg_path}")
             
             if is_audio:
                 ydl_opts['postprocessors'] = [{
@@ -630,134 +804,3 @@ class YouTubeDownloaderApp:
             messagebox.showinfo("下载历史", "暂无下载历史记录")
             return
         
-        history_window = tk.Toplevel(self.root)
-        history_window.title("下载历史")
-        history_window.geometry("800x500")
-        history_window.minsize(700, 400)
-        
-        # 创建表格
-        columns = ("序号", "标题", "URL", "格式", "保存路径", "时间")
-        tree = ttk.Treeview(history_window, columns=columns, show="headings")
-        
-        # 设置列宽和标题
-        for col in columns:
-            tree.heading(col, text=col)
-            if col == "标题":
-                tree.column(col, width=200)
-            elif col == "URL":
-                tree.column(col, width=300)
-            elif col == "保存路径":
-                tree.column(col, width=150)
-            else:
-                tree.column(col, width=80)
-        
-        # 添加数据
-        for i, entry in enumerate(reversed(self.download_history), 1):
-            tree.insert("", "end", values=(
-                i,
-                entry["title"],
-                entry["url"],
-                entry["format_id"],
-                entry["save_path"],
-                entry["timestamp"]
-            ))
-        
-        # 添加滚动条
-        scrollbar = ttk.Scrollbar(history_window, orient="vertical", command=tree.yview)
-        tree.configure(yscroll=scrollbar.set)
-        
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        tree.pack(fill=tk.BOTH, expand=True)
-        
-        # 添加双击打开文件位置功能
-        def open_file_location(event):
-            item = tree.selection()[0]
-            values = tree.item(item, "values")
-            path = values[4]
-            
-            if platform.system() == "Windows":
-                os.startfile(path)
-            elif platform.system() == "Darwin":  # macOS
-                subprocess.run(["open", path])
-            else:  # Linux
-                subprocess.run(["xdg-open", path])
-        
-        tree.bind("<Double-1>", open_file_location)
-    
-    def transcode_file(self, input_file, output_file):
-        """转码文件"""
-        try:
-            # 检查ffmpeg是否存在
-            try:
-                subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-            except (subprocess.SubprocessError, FileNotFoundError):
-                self.result_queue.put(("error", "转码失败: 未找到ffmpeg。请确保ffmpeg已安装并添加到系统PATH中。"))
-                return
-            
-            # 构建ffmpeg命令
-            cmd = [
-                "ffmpeg",
-                "-i", input_file,
-                "-c:v", "libx264",  # 使用x264编码
-                "-preset", "medium",  # 编码速度预设
-                "-crf", "23",        # 质量控制
-                "-c:a", "aac",       # 音频编码
-                "-strict", "experimental",
-                "-y",                # 覆盖已存在文件
-                output_file
-            ]
-            
-            # 执行转码
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True
-            )
-            
-            # 监控转码进度
-            while True:
-                output = process.stderr.readline()
-                if output == '' and process.poll() is not None:
-                    break
-                if output:
-                    # 可以在这里解析输出以获取进度信息
-                    pass
-            
-            return_code = process.wait()
-            
-            if return_code == 0:
-                self.result_queue.put(("success", f"转码完成: {output_file}"))
-                # 删除原始文件（可选）
-                # os.remove(input_file)
-            else:
-                self.result_queue.put(("error", f"转码失败，返回代码: {return_code}"))
-        
-        except Exception as e:
-            self.result_queue.put(("error", f"转码过程中出错: {str(e)}"))
-    
-    def check_ffmpeg(self):
-        """检查系统中是否安装了ffmpeg"""
-        try:
-            subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-            return True
-        except (subprocess.SubprocessError, FileNotFoundError):
-            return False
-
-class QueueHandler(logging.Handler):
-    """日志处理器，将日志消息放入队列"""
-    def __init__(self, log_queue):
-        super().__init__()
-        self.log_queue = log_queue
-    
-    def emit(self, record):
-        self.log_queue.put(("info", self.format(record)))
-
-def main():
-    """程序入口点"""
-    root = tk.Tk()
-    app = YouTubeDownloaderApp(root)
-    root.mainloop()
-
-if __name__ == '__main__':
-    main()    
