@@ -126,32 +126,38 @@ class YouTubeDownloaderApp:
         ttk.Entry(save_path_frame, textvariable=self.save_path_var, width=50).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(save_path_frame, text="浏览...", command=self.browse_save_path).pack(side=tk.LEFT)
         
-        # 下载格式预设
-        ttk.Label(options_frame, text="下载格式:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        format_frame = ttk.Frame(options_frame)
-        format_frame.grid(row=1, column=1, sticky=tk.W, pady=5)
+        # 下载格式预设 - 分开视频和音频选项
+        ttk.Label(options_frame, text="视频格式:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.video_format_var = tk.StringVar(value="bestvideo")
         
-        self.format_preset = tk.StringVar(value="custom")
-        
-        # 预设选项
-        format_presets = [
-            ("最高质量视频", "bestvideo+bestaudio"),
+        video_formats = [
+            ("最高质量视频", "bestvideo"),
             ("720p 视频", "best[height<=720]"),
             ("480p 视频", "best[height<=480]"),
             ("360p 视频", "best[height<=360]"),
-            ("仅音频 (MP3)", "bestaudio"),
-            ("仅音频 (原始格式)", "bestaudio"),
-            ("自定义", "custom")
+            ("无视频", "none")
         ]
         
-        for i, (text, value) in enumerate(format_presets):
-            ttk.Radiobutton(format_frame, text=text, variable=self.format_preset, value=value).grid(row=i//4, column=i%4, sticky=tk.W, padx=5, pady=2)
+        video_frame = ttk.Frame(options_frame)
+        video_frame.grid(row=1, column=1, sticky=tk.W, pady=5)
         
-        # 自定义格式ID
-        ttk.Label(options_frame, text="自定义格式ID:").grid(row=2, column=0, sticky=tk.W, pady=5)
-        self.custom_format_entry = ttk.Entry(options_frame, width=20)
-        self.custom_format_entry.grid(row=2, column=1, sticky=tk.W, pady=5, padx=5)
-        self.custom_format_entry.insert(0, "ID号")
+        for i, (text, value) in enumerate(video_formats):
+            ttk.Radiobutton(video_frame, text=text, variable=self.video_format_var, value=value).grid(row=i//4, column=i%4, sticky=tk.W, padx=5, pady=2)
+        
+        ttk.Label(options_frame, text="音频格式:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.audio_format_var = tk.StringVar(value="bestaudio")
+        
+        audio_formats = [
+            ("最高质量音频", "bestaudio"),
+            ("MP3 音频", "bestaudio"),
+            ("无音频", "none")
+        ]
+        
+        audio_frame = ttk.Frame(options_frame)
+        audio_frame.grid(row=2, column=1, sticky=tk.W, pady=5)
+        
+        for i, (text, value) in enumerate(audio_formats):
+            ttk.Radiobutton(audio_frame, text=text, variable=self.audio_format_var, value=value).grid(row=i//4, column=i%4, sticky=tk.W, padx=5, pady=2)
         
         # 字幕选项
         self.subtitle_var = tk.BooleanVar(value=False)
@@ -304,19 +310,26 @@ class YouTubeDownloaderApp:
         
         proxy = self.proxy_entry.get().strip() or None
         save_path = self.save_path_var.get()
-        format_preset = self.format_preset.get()
-        custom_format = self.custom_format_entry.get().strip()
+        video_format = self.video_format_var.get()
+        audio_format = self.audio_format_var.get()
         download_subtitles = self.subtitle_var.get()
         thread_count = int(self.threads_var.get())
         transcode = self.transcode_var.get()
         transcode_format = self.transcode_format.get()
         
         # 确定最终使用的格式ID
-        format_id = custom_format if format_preset == "custom" else format_preset
-        
-        if format_preset == "custom" and not format_id:
-            messagebox.showerror("错误", "自定义格式ID不能为空")
+        if video_format == "none" and audio_format != "none":
+            format_id = audio_format
+        elif audio_format == "none" and video_format != "none":
+            format_id = video_format
+        elif video_format != "none" and audio_format != "none":
+            format_id = f"{video_format}+{audio_format}"
+        else:
+            messagebox.showerror("错误", "请至少选择一种视频或音频格式")
             return
+        
+        # 检查是否需要提取音频
+        is_audio = format_id.lower().startswith('audio') or format_id == 'bestaudio'
         
         # 准备下载任务
         self.download_tasks = urls.copy()
@@ -436,6 +449,15 @@ class YouTubeDownloaderApp:
         try:
             # 检查是否需要提取音频
             is_audio = format_id.lower().startswith('audio') or format_id == 'bestaudio'
+            
+            # 检查ffmpeg是否可用（如果需要合并格式或提取音频）
+            needs_ffmpeg = (
+                '+' in format_id or  # 格式包含+表示需要合并
+                (format_id.lower().startswith('audio') or format_id == 'bestaudio')  # 音频提取需要ffmpeg
+            )
+            
+            if needs_ffmpeg and not self.check_ffmpeg():
+                raise RuntimeError("需要ffmpeg来合并格式或提取音频，但未找到ffmpeg。请安装ffmpeg并确保其在系统PATH中。")
             
             ydl_opts = {
                 'socket_timeout': 10,
@@ -713,6 +735,14 @@ class YouTubeDownloaderApp:
         
         except Exception as e:
             self.result_queue.put(("error", f"转码过程中出错: {str(e)}"))
+    
+    def check_ffmpeg(self):
+        """检查系统中是否安装了ffmpeg"""
+        try:
+            subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            return True
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return False
 
 class QueueHandler(logging.Handler):
     """日志处理器，将日志消息放入队列"""
@@ -730,4 +760,4 @@ def main():
     root.mainloop()
 
 if __name__ == '__main__':
-    main()
+    main()    
