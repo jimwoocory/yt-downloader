@@ -74,7 +74,11 @@ class YouTubeDownloaderApp:
         # 可用格式信息
         self.available_formats = {}
         
-        # 创建日志文件
+        # 工具目录
+        self.tool_dir = os.path.join(os.path.expanduser("~"), ".youtube_downloader")
+        os.makedirs(self.tool_dir, exist_ok=True)
+        
+        # 创建日志文件 (移到依赖检查前，确保路径正确)
         self._create_log_file()
         
         # 配置日志
@@ -82,10 +86,6 @@ class YouTubeDownloaderApp:
         
         # 捕获所有未处理的异常
         sys.excepthook = self._handle_exception
-        
-        # 工具目录
-        self.tool_dir = os.path.join(os.path.expanduser("~"), ".youtube_downloader")
-        os.makedirs(self.tool_dir, exist_ok=True)
         
         try:
             # 创建并显示启动画面
@@ -98,14 +98,16 @@ class YouTubeDownloaderApp:
             self._show_fatal_error(f"初始化界面失败: {str(e)}")
     
     def _create_log_file(self):
-        """创建日志文件"""
-        log_dir = os.path.join(os.path.expanduser("~"), ".youtube_downloader", "logs")
-        os.makedirs(log_dir, exist_ok=True)
-        
-        # 使用当前日期和时间作为日志文件名
-        now = datetime.now()
-        log_filename = now.strftime("youtube_downloader_%Y%m%d_%H%M%S.log")
-        self.log_file_path = os.path.join(log_dir, log_filename)
+        """创建日志文件，直接放在工具目录下"""
+        try:
+            # 使用当前日期和时间作为日志文件名
+            now = datetime.now()
+            log_filename = now.strftime("youtube_downloader_%Y%m%d_%H%M%S.log")
+            self.log_file_path = os.path.join(self.tool_dir, log_filename)
+        except Exception as e:
+            # 如果无法创建日志文件，使用默认路径
+            self.log_file_path = os.path.join(os.path.expanduser("~"), "youtube_downloader.log")
+            self.logger.error(f"创建日志文件失败，使用默认路径: {self.log_file_path}")
     
     def start_dependency_check(self):
         """开始依赖检查线程"""
@@ -147,7 +149,7 @@ class YouTubeDownloaderApp:
         except Exception as e:
             # 如果日志配置失败，尝试创建一个简单的错误日志文件
             try:
-                error_log_path = os.path.join(os.path.expanduser("~"), ".youtube_downloader", "error_log.txt")
+                error_log_path = os.path.join(self.tool_dir, "error_log.txt")
                 with open(error_log_path, 'w', encoding='utf-8') as f:
                     f.write(f"配置日志系统失败: {str(e)}\n")
             except:
@@ -173,7 +175,7 @@ class YouTubeDownloaderApp:
     
     def _show_error_dialog(self, message):
         """显示错误对话框"""
-        if self.log_text:
+        if hasattr(self, 'log_text') and self.log_text:
             self.log_text.config(state=tk.NORMAL)
             self.log_text.insert(tk.END, f"错误: {message}\n", "ERROR")
             self.log_text.config(state=tk.DISABLED)
@@ -383,11 +385,12 @@ class YouTubeDownloaderApp:
             
             # 使用国内镜像下载FFmpeg
             if platform.system() == "Windows":
-                ffmpeg_url = "https://cdn.npmmirror.com/binaries/ffmpeg/latest/ffmpeg-win64-latest.zip"
+                # 修改为有效的FFmpeg下载地址
+                ffmpeg_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n4.4-latest-win64-gpl-4.4.zip"
             elif platform.system() == "Darwin":  # macOS
-                ffmpeg_url = "https://cdn.npmmirror.com/binaries/ffmpeg/latest/ffmpeg-osx-x64-latest.zip"
+                ffmpeg_url = "https://evermeet.cx/ffmpeg/getrelease/zip"
             else:  # Linux
-                ffmpeg_url = "https://cdn.npmmirror.com/binaries/ffmpeg/latest/ffmpeg-linux-x64-latest.zip"
+                ffmpeg_url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
             
             # 下载FFmpeg
             self.root.after(0, lambda: self.ffmpeg_status.set("正在下载..."))
@@ -432,7 +435,12 @@ class YouTubeDownloaderApp:
                                 dir_name = os.path.dirname(name)
                                 if name.endswith(ffmpeg_exe) and not ffmpeg_found:
                                     zip_ref.extract(name, ffmpeg_dir)
-                                    os.rename(os.path.join(ffmpeg_dir, name), ffmpeg_path)
+                                    # 处理Windows下载路径结构
+                                    if platform.system() == "Windows":
+                                        # 从解压后的子目录移动到ffmpeg_dir
+                                        os.rename(os.path.join(ffmpeg_dir, name), ffmpeg_path)
+                                    else:
+                                        os.rename(os.path.join(ffmpeg_dir, name), ffmpeg_path)
                                     ffmpeg_found = True
                                 elif name.endswith(ffplay_exe) and not ffplay_found:
                                     zip_ref.extract(name, ffmpeg_dir)
@@ -530,11 +538,11 @@ class YouTubeDownloaderApp:
             self.root.after(0, lambda: self.yt_dlp_status.set("准备下载..."))
             self.root.after(0, lambda: self.yt_dlp_progress_var.set(0))
             
-            # 使用国内镜像下载yt-dlp
+            # 修改为有效的yt-dlp下载地址
             if platform.system() == "Windows":
-                yt_dlp_url = "https://cdn.npmmirror.com/binaries/yt-dlp/latest/yt-dlp.exe"
+                yt_dlp_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
             else:  # macOS和Linux
-                yt_dlp_url = "https://cdn.npmmirror.com/binaries/yt-dlp/latest/yt-dlp"
+                yt_dlp_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
             
             # 下载yt-dlp
             self.root.after(0, lambda: self.yt_dlp_status.set("正在下载..."))
@@ -563,6 +571,7 @@ class YouTubeDownloaderApp:
             target_path = os.path.join(target_dir, filename)
             
             # 尝试使用requests下载
+            self.logger.info(f"开始下载: {url}")
             response = requests.get(url, stream=True)
             response.raise_for_status()
             
@@ -579,10 +588,13 @@ class YouTubeDownloaderApp:
                     f.write(data)
                     
                     # 更新进度条
-                    progress = (downloaded_size / total_size) * 100
+                    progress = (downloaded_size / total_size) * 100 if total_size > 0 else 0
                     self.root.after(0, lambda p=progress: progress_var.set(p))
                     self.root.after(0, lambda s=f"下载中: {progress:.1f}%": status_var.set(s))
+            
+            self.logger.info(f"下载完成: {url}")
         except Exception as e:
+            self.logger.error(f"下载失败: {url}, 错误: {str(e)}")
             # 清理不完整的下载
             if os.path.exists(target_path):
                 os.remove(target_path)
@@ -803,7 +815,7 @@ class YouTubeDownloaderApp:
                     pass  # 处理队列为空的情况
                 except Exception as e:
                     # 记录处理日志时发生的错误
-                    print(f"Error processing log message: {e}")
+                    self.logger.error(f"处理日志消息失败: {str(e)}")
             
             # 继续轮询日志队列
             self.root.after(100, self.process_log_messages)
@@ -817,4 +829,4 @@ class YouTubeDownloaderApp:
 if __name__ == "__main__":
     root = tk.Tk()
     app = YouTubeDownloaderApp(root)
-    root.mainloop()
+    root.mainloop()    
