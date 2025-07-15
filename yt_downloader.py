@@ -179,7 +179,7 @@ class YouTubeDownloaderApp:
         """创建日志文件"""
         try:
             now = datetime.now()
-            log_filename = now.strftime("youtube_downloader_%Y%m%d_%H%M%S.log")
+            log_filename = "youtube_downloader_%Y%m%d_%H%M%S.log"
             self.log_file_path = os.path.join(self.tool_dir, log_filename)
         except Exception as e:
             self.log_file_path = os.path.join(os.path.expanduser("~"), "youtube_downloader.log")
@@ -665,7 +665,7 @@ class YouTubeDownloaderApp:
             # 更新UI
             self.root.after(0, lambda: self._update_video_info_ui())
             
-            self.logger.info(f"成功获取视频信息: {video_info.get("title", "未知标题")}")
+            self.logger.info(f"成功获取视频信息: {video_info.get('title', '未知标题')}")
         except Exception as e:
             self.logger.error(f"获取视频信息失败: {str(e)}")
             self.root.after(0, lambda: self._show_error_dialog(f"获取视频信息失败: {str(e)}"))
@@ -893,4 +893,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
