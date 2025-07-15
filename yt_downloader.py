@@ -1000,3 +1000,16 @@ class YouTubeDownloaderApp:
                 self.log_text.config(state=tk.NORMAL)
                 self.log_text.insert(tk.END, f"{msg}\n", level)
                 self.log_text.config(state=tk.DISABLED)
+            except queue.Empty:
+                pass  # 处理队列为空的情况
+            except Exception as e:
+                # 记录处理日志时发生的错误
+                print(f"Error processing log message: {e}")
+        
+        # 继续轮询日志队列
+        self.root.after(100, self.process_log_messages)
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = YouTubeDownloaderApp(root)
+    root.mainloop()
