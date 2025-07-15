@@ -84,7 +84,16 @@ class YouTubeDownloaderApp:
         # 创建并显示启动画面
         self.create_splash_screen()
         
-        # 检查并下载依赖
+        # 确保启动画面有足够的时间渲染，然后再开始依赖检查
+        self.root.after(100, self.start_dependency_check)
+    
+    def start_dependency_check(self):
+        """开始依赖检查线程"""
+        # 显示启动画面
+        self.splash.deiconify()
+        self.root.update()
+        
+        # 在单独线程中检查依赖
         threading.Thread(target=self.check_dependencies, daemon=True).start()
     
     def setup_logging(self):
@@ -219,8 +228,7 @@ class YouTubeDownloaderApp:
         ).pack(anchor=tk.CENTER)
         
         # 确保窗口可见
-        self.splash.deiconify()
-        self.root.update()
+        self.splash.withdraw()  # 先隐藏，稍后显示
     
     def check_dependencies(self):
         """检查并下载必要的依赖"""
@@ -769,3 +777,226 @@ class YouTubeDownloaderApp:
         """更新视频信息UI"""
         # 更新标题
         self.title_var.set(info.get('title', '未知标题'))
+        
+        # 更新时长
+        duration = info.get('duration', 0)
+        if duration:
+            minutes, seconds = divmod(duration, 60)
+            hours, minutes = divmod(minutes, 60)
+            if hours > 0:
+                self.duration_var.set(f"时长: {hours:02d}:{minutes:02d}:{seconds:02d}")
+            else:
+                self.duration_var.set(f"时长: {minutes:02d}:{seconds:02d}")
+        else:
+            self.duration_var.set("时长: --:--")
+        
+        # 更新观看次数
+        view_count = info.get('view_count', 0)
+        if view_count:
+            if view_count >= 1_000_000:
+                self.views_var.set(f"观看次数: {view_count/1_000_000:.1f}M")
+            elif view_count >= 1_000:
+                self.views_var.set(f"观看次数: {view_count/1_000:.1f}K")
+            else:
+                self.views_var.set(f"观看次数: {view_count}")
+        else:
+            self.views_var.set("观看次数: --")
+        
+        # 更新发布日期
+        upload_date = info.get('upload_date', '')
+        if upload_date:
+            try:
+                year = upload_date[:4]
+                month = upload_date[4:6]
+                day = upload_date[6:8]
+                self.date_var.set(f"发布日期: {year}-{month}-{day}")
+            except:
+                self.date_var.set("发布日期: --")
+        else:
+            self.date_var.set("发布日期: --")
+        
+        # 更新缩略图
+        self._update_thumbnail(info)
+    
+    def _update_thumbnail(self, info):
+        """更新视频缩略图"""
+        thumbnail_url = info.get('thumbnail', '')
+        if thumbnail_url:
+            # 由于无法直接从URL加载图片，我们使用Canvas绘制一个简单的缩略图
+            self.thumb_canvas.delete("all")
+            
+            # 绘制背景
+            self.thumb_canvas.create_rectangle(0, 0, 320, 180, fill=self.secondary_color)
+            
+            # 绘制视频播放按钮
+            self.thumb_canvas.create_polygon(
+                140, 80, 200, 120, 140, 160, 
+                fill=self.primary_color, outline=""
+            )
+            
+            # 添加视频标题文本
+            title = info.get('title', '未知标题')
+            # 截断过长的标题
+            if len(title) > 40:
+                title = title[:40] + "..."
+            
+            self.thumb_canvas.create_text(
+                160, 150, 
+                text=title, 
+                fill=self.text_color, 
+                font=('SimHei', 10),
+                width=300
+            )
+    
+    def _update_format_combobox(self, formats):
+        """更新格式选择下拉框"""
+        if not formats:
+            self.format_combobox['values'] = ["无可用格式"]
+            self.format_combobox.set("无可用格式")
+            self.format_combobox['state'] = 'disabled'
+            return
+        
+        # 提取格式字符串
+        format_strings = [f[0] for f in formats]
+        
+        # 缓存格式ID
+        self.available_formats = {f[0]: f[1] for f in formats}
+        
+        # 更新下拉框
+        self.format_combobox['values'] = format_strings
+        self.format_combobox.set(format_strings[0])  # 默认选择第一个格式
+        self.format_combobox['state'] = 'readonly'
+        
+        # 启用下载按钮
+        download_button = self.format_combobox.master.nametowidget(".!frame3.!labelframe.!frame.!frame2.!button")
+        download_button['state'] = 'normal'
+    
+    def browse_download_path(self):
+        """浏览并选择下载路径"""
+        path = filedialog.askdirectory(initialdir=self.path_var.get())
+        if path:
+            self.path_var.set(path)
+    
+    def start_download(self):
+        """开始下载视频"""
+        if not self.video_info:
+            messagebox.showerror("错误", "没有可用的视频信息")
+            return
+        
+        # 获取选择的格式
+        selected_format = self.format_var.get()
+        if not selected_format or selected_format == "无可用格式":
+            messagebox.showerror("错误", "请选择有效的下载格式")
+            return
+        
+        format_id = self.available_formats.get(selected_format)
+        if not format_id:
+            messagebox.showerror("错误", "无效的格式ID")
+            return
+        
+        # 获取下载路径
+        download_path = self.path_var.get()
+        if not download_path or not os.path.exists(download_path):
+            messagebox.showerror("错误", "请选择有效的下载路径")
+            return
+        
+        # 获取视频标题作为文件名
+        video_title = self.video_info.get('title', 'video')
+        # 替换文件名中的非法字符
+        video_title = "".join([c for c in video_title if c not in r'\/:*?"<>|'])
+        
+        # 构建输出模板
+        output_template = os.path.join(download_path, f"{video_title}.%(ext)s")
+        
+        # 准备下载选项
+        ydl_opts = {
+            'format': format_id,
+            'outtmpl': output_template,
+            'progress_hooks': [self._download_progress_hook],
+            'ffmpeg_location': self.ffmpeg_path,
+            'downloader': self.ydl_path,
+            'noplaylist': True,
+            'quiet': True,
+        }
+        
+        # 更新UI状态
+        self.progress_var.set(0)
+        self.progress_text.set("准备下载...")
+        self.status_var.set("开始下载...")
+        
+        # 禁用下载按钮
+        download_button = self.format_combobox.master.nametowidget(".!frame3.!labelframe.!frame.!frame2.!button")
+        download_button['state'] = 'disabled'
+        
+        # 在单独线程中执行下载
+        threading.Thread(target=self._download_video, args=(ydl_opts,), daemon=True).start()
+    
+    def _download_video(self, ydl_opts):
+        """在单独线程中下载视频"""
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                self.logger.info(f"开始下载: {self.video_info.get('title', '未知视频')}")
+                ydl.download([self.video_info['webpage_url']])
+            
+            self.root.after(0, lambda: self._download_complete())
+        except Exception as e:
+            self.root.after(0, lambda: self._download_error(str(e)))
+    
+    def _download_progress_hook(self, d):
+        """下载进度回调函数"""
+        if d['status'] == 'downloading':
+            if 'downloaded_bytes' in d and 'total_bytes' in d:
+                percent = int(100 * d['downloaded_bytes'] / d['total_bytes'])
+                self.root.after(0, lambda p=percent: self.progress_var.set(p))
+                self.root.after(0, lambda s=f"下载中: {p}%": self.progress_text.set(s))
+                self.root.after(0, lambda s=f"下载中: {p}%": self.status_var.set(s))
+        elif d['status'] == 'finished':
+            self.root.after(0, lambda: self.progress_text.set("正在处理..."))
+            self.root.after(0, lambda: self.status_var.set("正在处理..."))
+    
+    def _download_complete(self):
+        """下载完成后的处理"""
+        self.progress_var.set(100)
+        self.progress_text.set("下载完成")
+        self.status_var.set("下载完成")
+        
+        # 启用下载按钮
+        download_button = self.format_combobox.master.nametowidget(".!frame3.!labelframe.!frame.!frame2.!button")
+        download_button['state'] = 'normal'
+        
+        # 显示完成消息
+        messagebox.showinfo("成功", "视频下载完成!")
+        self.logger.info("下载完成")
+    
+    def _download_error(self, error_msg):
+        """下载错误处理"""
+        self.progress_text.set("下载失败")
+        self.status_var.set("下载失败")
+        
+        # 启用下载按钮
+        download_button = self.format_combobox.master.nametowidget(".!frame3.!labelframe.!frame.!frame2.!button")
+        download_button['state'] = 'normal'
+        
+        # 显示错误消息
+        messagebox.showerror("错误", f"下载失败: {error_msg}")
+        self.logger.error(f"下载失败: {error_msg}")
+    
+    def process_log_messages(self):
+        """处理日志消息，更新日志UI"""
+        while not self.result_queue.empty():
+            try:
+                level, msg = self.result_queue.get_nowait()
+                
+                # 根据日志级别设置不同的颜色
+                if level == 'ERROR':
+                    color = '#FF5252'  # 红色
+                elif level == 'WARNING':
+                    color = '#FFD740'  # 黄色
+                elif level == 'INFO':
+                    color = '#4CAF50'  # 绿色
+                else:
+                    color = '#FFFFFF'  # 白色
+                
+                self.log_text.config(state=tk.NORMAL)
+                self.log_text.insert(tk.END, f"{msg}\n", level)
+                self.log_text.config(state=tk.DISABLED)
