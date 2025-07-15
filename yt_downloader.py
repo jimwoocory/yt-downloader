@@ -32,6 +32,7 @@ class YouTubeDownloaderApp:
         # 日志队列和结果队列
         self.log_queue = queue.Queue()
         self.result_queue = queue.Queue()
+        self.download_queue = queue.Queue()  # 添加下载队列
 
         # 下载任务列表和控制变量
         self.download_tasks = []
@@ -405,7 +406,8 @@ class YouTubeDownloaderApp:
         # 终止当前下载
         if self.ydl_instance:
             self.logger.info("正在终止下载...")
-            self.ydl_instance._download_retcode = -1  # 设置退出码强制终止
+            # 使用 yt_dlp 提供的方法优雅地停止下载
+            self.ydl_instance._abort = True
             self.ydl_instance = None
             self.is_downloading = False
             self.update_progress(0, "下载已终止")
@@ -479,7 +481,10 @@ class YouTubeDownloaderApp:
                 'writesubtitles': download_subtitles,
                 'writeautomaticsub': download_subtitles,
                 'subtitleslangs': ['en', 'zh-Hans', 'zh-Hant'],  # 下载多种语言字幕
-                'format': format_id
+                'format': format_id,
+                'ignoreerrors': True,  # 忽略错误，继续处理其他任务
+                'nooverwrites': True,  # 不覆盖已存在的文件
+                'abort_on_unavailable_fragment': True  # 遇到不可用片段时终止下载
             }
 
             self.ydl_instance = yt_dlp.YoutubeDL(ydl_opts)
@@ -539,8 +544,9 @@ class YouTubeDownloaderApp:
     def load_download_history(self):
         """加载下载历史"""
         try:
-            if os.path.exists("download_history.json"):
-                with open("download_history.json", "r", encoding="utf-8") as f:
+            history_file = os.path.join(os.path.expanduser("~"), "youtube_downloader_history.json")
+            if os.path.exists(history_file):
+                with open(history_file, "r", encoding="utf-8") as f:
                     self.download_history = json.load(f)
             else:
                 self.download_history = []
@@ -551,6 +557,7 @@ class YouTubeDownloaderApp:
     def save_download_history(self, url, title, format_id, save_path):
         """保存下载历史"""
         try:
+            history_file = os.path.join(os.path.expanduser("~"), "youtube_downloader_history.json")
             history_entry = {
                 "url": url,
                 "title": title,
@@ -565,7 +572,7 @@ class YouTubeDownloaderApp:
             if len(self.download_history) > 100:
                 self.download_history = self.download_history[-100:]
             
-            with open("download_history.json", "w", encoding="utf-8") as f:
+            with open(history_file, "w", encoding="utf-8") as f:
                 json.dump(self.download_history, f, ensure_ascii=False, indent=2)
         except Exception as e:
             self.logger.error(f"保存下载历史失败: {str(e)}")
@@ -645,5 +652,4 @@ def main():
     root.mainloop()
 
 if __name__ == "__main__":
-    main()
-
+    main()    
