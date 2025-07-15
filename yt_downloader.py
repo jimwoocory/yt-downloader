@@ -1,895 +1,561 @@
+import yt_dlp
 import sys
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk, scrolledtext
+from tkinter import filedialog, simpledialog, messagebox
+from tkinter import ttk, scrolledtext
 import threading
 import logging
 import queue
+from urllib.parse import urlparse
 import os
 from datetime import datetime
-import requests
 import json
-import re
-from PIL import Image, ImageTk # 导入Pillow库用于图像处理
-
-class QueueHandler(logging.Handler):
-    """日志处理器，将日志消息放入队列"""
-    def __init__(self, log_queue):
-        super().__init__()
-        self.log_queue = log_queue
-    
-    def emit(self, record):
-        self.log_queue.put((record.levelname, self.format(record)))
+import subprocess
+import platform
 
 class YouTubeDownloaderApp:
     def __init__(self, root):
         self.root = root
         self.root.title("YouTube 下载器")
-        self.root.geometry("1000x800")
+        self.root.geometry("900x700")  # 增加窗口高度以容纳新组件
+        self.root.minsize(800, 600)
+        self.root.geometry("1000x800")  # 增加窗口高度以容纳新组件
         self.root.minsize(900, 750)
-        self.root.withdraw()  # 隐藏主窗口，直到初始化完成
-        
-        # API配置（使用公开的视频解析API）
-        self.api_base_url = "https://api.baomitu.com/api/video_parse/"  # 视频解析API
-        self.api_timeout = 30  # API请求超时时间（秒）
-        
+
         # 设置中文字体支持
         self.style = ttk.Style()
-        self.style.configure("TLabel", font=("Microsoft YaHei UI", 10))
-        self.style.configure("TButton", font=("Microsoft YaHei UI", 10))
-        self.style.configure("TEntry", font=("Microsoft YaHei UI", 10))
-        self.style.configure("TCombobox", font=("Microsoft YaHei UI", 10))
-        self.style.configure("TScrolledtext", font=("Microsoft YaHei UI", 10))
-        
-        # 自定义主题颜色
-        self.bg_color = "#1E1E1E"        # 主背景色 (深灰)
-        self.card_color = "#2D2D2D"      # 卡片背景色 (稍浅的深灰)
-        self.primary_color = "#FF0000"   # 主色调 (YouTube红)
-        self.secondary_color = "#383838" # 次要背景色 (更深的灰)
-        self.text_color = "#FFFFFF"      # 文本颜色 (白色)
-        self.accent_color = "#4CAF50"    # 强调色 (绿色)
-        self.border_color = "#444444"    # 边框颜色
-        
-        # 配置自定义样式
-        self.style.theme_use("clam") # 使用clam主题作为基础
-        self.style.configure("Main.TFrame", background=self.bg_color)
-        self.style.configure("Card.TFrame", background=self.card_color, relief="flat", borderwidth=0)
-        self.style.configure("Title.TLabel", font=("Microsoft YaHei UI", 24, "bold"), foreground=self.text_color, background=self.bg_color)
-        self.style.configure("Subtitle.TLabel", font=("Microsoft YaHei UI", 12), foreground=self.text_color, background=self.bg_color)
-        self.style.configure("CardTitle.TLabel", font=("Microsoft YaHei UI", 16, "bold"), foreground=self.text_color, background=self.card_color)
-        self.style.configure("CardText.TLabel", font=("Microsoft YaHei UI", 10), foreground=self.text_color, background=self.card_color)
-        
-        # 按钮样式
-        self.style.configure("TButton", 
-                             font=("Microsoft YaHei UI", 10, "bold"), 
-                             foreground=self.text_color, 
-                             background=self.primary_color,
-                             focuscolor=self.primary_color,
-                             bordercolor=self.primary_color,
-                             relief="flat")
-        self.style.map("TButton", 
-                       background=[("active", self._darken_color(self.primary_color, 20))],
-                       foreground=[("active", self.text_color)])
-        
-        self.style.configure("Accent.TButton", 
-                             font=("Microsoft YaHei UI", 10, "bold"), 
-                             foreground=self.text_color, 
-                             background=self.accent_color,
-                             focuscolor=self.accent_color,
-                             bordercolor=self.accent_color,
-                             relief="flat")
-        self.style.map("Accent.TButton", 
-                       background=[("active", self._darken_color(self.accent_color, 20))],
-                       foreground=[("active", self.text_color)])
-
-        # 进度条样式
-        self.style.configure("TProgressbar", 
-                             background=self.primary_color, 
-                             troughcolor=self.secondary_color,
-                             bordercolor=self.border_color,
-                             thickness=10)
-        
-        # 输入框样式
-        self.style.configure("TEntry", 
-                             fieldbackground=self.secondary_color, 
-                             foreground=self.text_color, 
-                             bordercolor=self.border_color,
-                             insertcolor=self.text_color,
-                             relief="flat")
-        self.style.map("TEntry", 
-                       fieldbackground=[("focus", self._lighten_color(self.secondary_color, 5))])
-
-        # 下拉框样式
-        self.style.configure("TCombobox", 
-                             fieldbackground=self.secondary_color, 
-                             foreground=self.text_color, 
-                             selectbackground=self.primary_color,
-                             selectforeground=self.text_color,
-                             bordercolor=self.border_color,
-                             relief="flat")
-        self.style.map("TCombobox", 
-                       fieldbackground=[("readonly", self.secondary_color)],
-                       selectbackground=[("readonly", self.primary_color)])
-        self.style.configure("TCombobox.Border", borderwidth=1, relief="solid", background=self.secondary_color)
-        self.style.configure("TCombobox.downarrow", background=self.secondary_color, foreground=self.text_color)
-
-        # 标签框样式
-        self.style.configure("TLabelframe", 
-                             background=self.card_color, 
-                             foreground=self.text_color, 
-                             bordercolor=self.border_color,
-                             relief="solid",
-                             borderwidth=1)
-        self.style.configure("TLabelframe.Label", 
-                             background=self.card_color, 
-                             foreground=self.text_color, 
-                             font=("Microsoft YaHei UI", 12, "bold"))
-
-        # ScrolledText 样式
-        self.style.configure("TScrolledtext", 
-                             background=self.secondary_color, 
-                             foreground=self.text_color,
-                             bordercolor=self.border_color,
-                             relief="flat")
-        
-        # 创建队列
+@@ -28,15 +31,24 @@
+        self.download_queue = queue.Queue()
         self.result_queue = queue.Queue()
+
+        # 下载任务列表
+        # 下载任务列表和控制变量
+        self.download_tasks = []
+        self.current_task_index = 0
+        self.total_tasks = 0
+        self.abort_all_tasks = False
         
         # 视频信息缓存
         self.video_info = {}
-        self.available_formats = []
-        
-        # 工具目录
-        self.tool_dir = os.path.join(os.path.expanduser("~"), ".youtube_downloader")
-        os.makedirs(self.tool_dir, exist_ok=True)
-        
-        # 创建日志文件
-        self._create_log_file()
-        
+
         # 配置日志
         self.setup_logging()
-        
-        # 捕获所有未处理的异常
-        sys.excepthook = self._handle_exception
-        
-        try:
-            # 创建并显示启动画面
-            self.create_splash_screen()
-            
-            # 显示启动画面后直接进入主界面（无需依赖检查）
-            # self.root.after(1500, self._create_main_interface) # 移除此行，由_update_loading_progress控制
-        except Exception as e:
-            self.logger.error(f"初始化界面失败: {str(e)}")
-            self._show_fatal_error(f"初始化界面失败: {str(e)}")
-    
-    def _darken_color(self, hex_color, amount):
-        """根据百分比调暗颜色"""
-        hex_color = hex_color.lstrip("#")
-        rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-        darkened_rgb = tuple(max(0, c - amount) for c in rgb)
-        return "#%02x%02x%02x" % darkened_rgb
 
-    def _lighten_color(self, hex_color, amount):
-        """根据百分比调亮颜色"""
-        hex_color = hex_color.lstrip("#")
-        rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-        lightened_rgb = tuple(min(255, c + amount) for c in rgb)
-        return "#%02x%02x%02x" % lightened_rgb
+        # 创建界面
+        self.create_widgets()
 
-    def _create_log_file(self):
-        """创建日志文件"""
-        try:
-            now = datetime.now()
-            log_filename = "youtube_downloader_%Y%m%d_%H%M%S.log"
-            self.log_file_path = os.path.join(self.tool_dir, log_filename)
-        except Exception as e:
-            self.log_file_path = os.path.join(os.path.expanduser("~"), "youtube_downloader.log")
-            self.logger.error(f"创建日志文件失败，使用默认路径: {self.log_file_path}")
-    
+        # 加载下载历史
+        self.load_download_history()
+        
+        # 启动队列处理线程
+        self.processing_thread = threading.Thread(target=self.process_queue, daemon=True)
+        self.processing_thread.start()
+@@ -47,6 +59,7 @@
+        # 用于终止下载的变量
+        self.ydl_instance = None
+        self.is_downloading = False
+        self.download_threads = {}  # 跟踪所有下载线程
+
     def setup_logging(self):
-        """配置日志系统"""
-        try:
-            self.logger = logging.getLogger(__name__)
-            self.logger.setLevel(logging.DEBUG)
-            
-            # 文件日志
-            file_handler = logging.FileHandler(self.log_file_path, encoding="utf-8")
-            file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-            file_handler.setFormatter(file_formatter)
-            self.logger.addHandler(file_handler)
-            
-            # GUI日志
-            self.log_handler = QueueHandler(self.result_queue)
-            formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-            self.log_handler.setFormatter(formatter)
-            self.logger.addHandler(self.log_handler)
-            
-            # 控制台日志
-            console_handler = logging.StreamHandler()
-            console_handler.setFormatter(formatter)
-            self.logger.addHandler(console_handler)
-            
-            self.logger.info("日志系统初始化完成")
-        except Exception as e:
-            try:
-                error_log_path = os.path.join(self.tool_dir, "error_log.txt")
-                with open(error_log_path, "w", encoding="utf-8") as f:
-                    f.write(f"配置日志系统失败: {str(e)}\n")
-            except:
-                pass
-    
-    def _handle_exception(self, exc_type, exc_value, exc_traceback):
-        """处理未捕获的异常"""
-        if issubclass(exc_type, KeyboardInterrupt):
-            self.root.destroy()
-            return
-        
-        error_msg = f"未处理的异常: {exc_type.__name__}, {str(exc_value)}"
-        self.logger.error(error_msg, exc_info=(exc_type, exc_value, exc_traceback))
-        
-        if hasattr(self, "log_text"):
-            self.root.after(0, lambda: self._show_error_dialog(error_msg))
-        else:
-            self.root.after(0, lambda: self._show_fatal_error(error_msg))
-    
-    def _show_error_dialog(self, message):
-        """显示错误对话框"""
-        if hasattr(self, "log_text") and self.log_text:
-            self.log_text.config(state=tk.NORMAL)
-            self.log_text.insert(tk.END, f"错误: {message}\n", "ERROR")
-            self.log_text.config(state=tk.DISABLED)
-        
-        messagebox.showerror("错误", message)
-    
-    def _show_fatal_error(self, message):
-        """显示严重错误并退出程序"""
-        if hasattr(self, "splash") and self.splash:
-            self.splash.destroy()
-        
-        messagebox.showerror("严重错误", f"{message}\n\n日志文件: {self.log_file_path}")
-        self.root.destroy()
-    
-    def create_splash_screen(self):
-        """创建启动画面"""
-        try:
-            self.splash = tk.Toplevel(self.root)
-            self.splash.title("启动中...")
-            self.splash.geometry("600x400")
-            self.splash.resizable(False, False)
-            self.splash.transient(self.root)
-            self.splash.overrideredirect(True) # 移除窗口边框
-            self.splash.configure(bg=self.bg_color)
-            
-            # 居中显示
-            self.splash.update_idletasks()
-            width = self.splash.winfo_width()
-            height = self.splash.winfo_height()
-            x = (self.splash.winfo_screenwidth() // 2) - (width // 2)
-            y = (self.splash.winfo_screenheight() // 2) - (height // 2)
-            self.splash.geometry("{}x{}+{}+{}".format(width, height, x, y))
-            
-            # 主框架
-            main_frame = ttk.Frame(self.splash, style="Main.TFrame", padding="20")
-            main_frame.pack(fill=tk.BOTH, expand=True)
-            
-            # 应用图标和名称
-            title_frame = ttk.Frame(main_frame, style="Main.TFrame")
-            title_frame.pack(pady=(60, 20))
-            
-            # 使用PIL创建更美观的YouTube图标
-            icon_size = 60
-            try:
-                # 尝试创建YouTube播放按钮图标
-                # 创建一个红色的矩形作为背景
-                img = Image.new("RGBA", (icon_size, int(icon_size * 2 / 3)), (255, 0, 0, 255)) # YouTube Red
-                # 在矩形上绘制一个白色的播放三角形
-                # 这是一个简化的绘制，实际可能需要更复杂的路径
-                # 为了简单，这里只画一个白色三角形
-                triangle_coords = [(icon_size * 0.4, icon_size * 0.2), 
-                                   (icon_size * 0.4, icon_size * 0.8), 
-                                   (icon_size * 0.7, icon_size * 0.5)]
-                
-                # 创建一个白色三角形的Image
-                triangle_img = Image.new("RGBA", (icon_size, int(icon_size * 2 / 3)), (0, 0, 0, 0))
-                from PIL import ImageDraw
-                draw = ImageDraw.Draw(triangle_img)
-                draw.polygon(triangle_coords, fill=(255, 255, 255, 255))
-                
-                img.paste(triangle_img, (0,0), triangle_img)
-                
-                self.youtube_icon = ImageTk.PhotoImage(img)
-                icon_label = tk.Label(title_frame, image=self.youtube_icon, bg=self.bg_color)
-                icon_label.pack(side=tk.LEFT, padx=(0, 10))
-            except Exception as e:
-                self.logger.warning(f"无法创建YouTube图标，使用默认图标: {e}")
-                icon_canvas = tk.Canvas(title_frame, width=60, height=40, bg=self.bg_color, highlightthickness=0)
-                icon_canvas.pack(side=tk.LEFT, padx=(0, 10))
-                icon_canvas.create_polygon(10, 5, 50, 20, 10, 35, fill=self.primary_color)
-            
-            ttk.Label(
-                title_frame, 
-                text="YouTube 下载器",
-                style="Title.TLabel"
-            ).pack(side=tk.LEFT)
-            
-            ttk.Label(
-                main_frame, 
-                text="API版 - 无需本地依赖",
-                style="Subtitle.TLabel"
-            ).pack(pady=(0, 60))
-            
-            # 加载进度
-            self.loading_progress = tk.DoubleVar(value=0)
-            progress_frame = ttk.Frame(main_frame, style="Main.TFrame")
-            progress_frame.pack(fill=tk.X, pady=20, padx=50)
-            
-            ttk.Label(progress_frame, text="加载中...", style="Subtitle.TLabel").pack(side=tk.LEFT, padx=(0, 10))
-            
-            progress_bar = ttk.Progressbar(
-                progress_frame, 
-                variable=self.loading_progress, 
-                length=400, 
-                mode="determinate",
-                style="TProgressbar"
-            )
-            progress_bar.pack(side=tk.RIGHT, fill=tk.X, expand=True)
-            
-            # 底部信息
-            ttk.Label(
-                main_frame, 
-                text="© 2025 YouTube 下载器",
-                style="Subtitle.TLabel"
-            ).pack(side=tk.BOTTOM, pady=20)
-            
-            # 模拟加载进度
-            self._update_loading_progress()
-            
-            self.splash.deiconify()
-            self.root.update()
-        except Exception as e:
-            self.logger.error(f"创建启动画面失败: {str(e)}")
-            raise
-    
-    def _update_loading_progress(self):
-        """更新启动进度"""
-        current = self.loading_progress.get()
-        if current < 100:
-            self.loading_progress.set(current + 1)
-            self.root.after(20, self._update_loading_progress)
-        else:
-            # 加载完成
-            self.root.after(500, self._create_main_interface)
-    
-    def _create_main_interface(self):
-        """创建主界面"""
-        try:
-            # 关闭启动画面
-            if hasattr(self, "splash") and self.splash:
-                self.splash.destroy()
-            
-            # 显示主窗口
-            self.root.deiconify()
-            self.root.configure(bg=self.bg_color)
-            
-            # 顶部导航栏
-            nav_frame = ttk.Frame(self.root, style="Card.TFrame", padding="10")
-            nav_frame.pack(fill=tk.X, pady=(0, 10))
-            
-            ttk.Label(
-                nav_frame, 
-                text="YouTube 下载器",
-                style="Title.TLabel",
-                background=self.card_color # 确保背景色一致
-            ).pack(side=tk.LEFT, padx=10)
-            
-            # 主内容区域
-            content_frame = ttk.Frame(self.root, style="Main.TFrame", padding="20")
-            content_frame.pack(fill=tk.BOTH, expand=True)
-            
-            # URL输入区域
-            url_frame = ttk.LabelFrame(content_frame, text="视频URL", style="TLabelframe", padding="10")
-            url_frame.pack(fill=tk.X, pady=(0, 10))
-            
-            self.url_entry = ttk.Entry(url_frame, width=70, font=("Microsoft YaHei UI", 12), style="TEntry")
-            self.url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-            
-            fetch_button = ttk.Button(
-                url_frame, 
-                text="获取视频信息", 
-                command=self.fetch_video_info,
-                style="Accent.TButton"
-            )
-            fetch_button.pack(side=tk.RIGHT)
-            
-            # 视频信息区域
-            info_frame = ttk.LabelFrame(content_frame, text="视频信息", style="TLabelframe", padding="10")
-            info_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-            
-            # 左侧缩略图区域
-            thumb_frame = ttk.Frame(info_frame, style="Card.TFrame")
-            thumb_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
-            
-            self.thumb_canvas = tk.Canvas(thumb_frame, width=320, height=180, bg=self.secondary_color, highlightthickness=0)
-            self.thumb_canvas.pack(padx=10, pady=10)
-            
-            # 播放按钮图标 (初始占位符)
-            self.thumb_canvas.create_polygon(
-                140, 80, 200, 120, 140, 160, 
-                fill=self.primary_color, outline=""
-            )
-            
-            # 右侧信息区域
-            details_frame = ttk.Frame(info_frame, style="Card.TFrame")
-            details_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-            
-            self.title_var = tk.StringVar(value="视频标题")
-            ttk.Label(
-                details_frame, 
-                textvariable=self.title_var,
-                style="CardTitle.TLabel"
-            ).pack(anchor=tk.W, padx=10, pady=(10, 5))
-            
-            # 视频信息标签
-            info_labels = ttk.Frame(details_frame, style="Card.TFrame")
-            info_labels.pack(fill=tk.X, padx=10, pady=5)
-            
-            self.duration_var = tk.StringVar(value="时长: --:--")
-            ttk.Label(
-                info_labels, 
-                textvariable=self.duration_var,
-                style="CardText.TLabel"
-            ).pack(side=tk.LEFT, padx=(0, 20))
-            
-            self.views_var = tk.StringVar(value="观看次数: --")
-            ttk.Label(
-                info_labels, 
-                textvariable=self.views_var,
-                style="CardText.TLabel"
-            ).pack(side=tk.LEFT, padx=(0, 20))
-            
-            self.date_var = tk.StringVar(value="发布日期: --")
-            ttk.Label(
-                info_labels, 
-                textvariable=self.date_var,
-                style="CardText.TLabel"
-            ).pack(side=tk.LEFT)
-            
-            # 格式选择区域
-            format_frame = ttk.LabelFrame(details_frame, text="下载格式", style="TLabelframe", padding="10")
-            format_frame.pack(fill=tk.X, padx=10, pady=5)
-            
-            self.format_var = tk.StringVar()
-            self.format_combobox = ttk.Combobox(
-                format_frame, 
-                textvariable=self.format_var, 
-                width=40,
-                state="disabled",
-                style="TCombobox"
-            )
-            self.format_combobox.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-            
-            download_button = ttk.Button(
-                format_frame, 
-                text="开始下载", 
-                command=self.start_download,
-                style="Accent.TButton",
-                state="disabled"
-            )
-            download_button.pack(side=tk.RIGHT)
-            
-            # 下载路径选择
-            path_frame = ttk.Frame(details_frame, style="Card.TFrame")
-            path_frame.pack(fill=tk.X, padx=10, pady=5)
-            
-            ttk.Label(path_frame, text="下载到:", style="CardText.TLabel").pack(side=tk.LEFT, padx=(0, 5))
-            self.path_var = tk.StringVar(value=os.path.expanduser("~"))
-            ttk.Entry(
-                path_frame, 
-                textvariable=self.path_var, 
-                width=45,
-                state="readonly",
-                style="TEntry"
-            ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-            
-            browse_button = ttk.Button(
-                path_frame, 
-                text="浏览", 
-                command=self.browse_download_path,
-                style="TButton"
-            )
-            browse_button.pack(side=tk.RIGHT)
-            
-            # 下载进度区域
-            progress_frame = ttk.LabelFrame(content_frame, text="下载进度", style="TLabelframe", padding="10")
-            progress_frame.pack(fill=tk.X, pady=(0, 10))
-            
-            self.progress_var = tk.DoubleVar()
-            self.progress_bar = ttk.Progressbar(
-                progress_frame, 
-                variable=self.progress_var, 
-                length=100, 
-                mode="determinate",
-                style="TProgressbar"
-            )
-            self.progress_bar.pack(fill=tk.X, expand=True)
-            
-            self.progress_text = tk.StringVar(value="等待下载...")
-            ttk.Label(
-                progress_frame, 
-                textvariable=self.progress_text,
-                style="Subtitle.TLabel"
-            ).pack(anchor=tk.W, pady=(5, 0))
-            
-            # 日志区域
-            log_frame = ttk.LabelFrame(content_frame, text="操作日志", style="TLabelframe", padding="10")
-            log_frame.pack(fill=tk.BOTH, expand=True)
-            
-            self.log_text = scrolledtext.ScrolledText(
-                log_frame, 
-                wrap=tk.WORD, 
-                height=10, 
-                bg=self.secondary_color, 
-                fg=self.text_color,
-                font=("Microsoft YaHei UI", 10),
-                relief="flat",
-                borderwidth=0,
-                insertbackground=self.text_color # 设置光标颜色
-            )
-            self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            
-            # 配置日志标签颜色
-            self.log_text.tag_config("ERROR", foreground="#FF5252")  # 红色
-            self.log_text.tag_config("WARNING", foreground="#FFD740")  # 黄色
-            self.log_text.tag_config("INFO", foreground="#4CAF50")  # 绿色
-            
-            self.log_text.config(state=tk.DISABLED)
-            
-            # 状态栏
-            status_frame = ttk.Frame(self.root, style="Card.TFrame", padding="5")
-            status_frame.pack(fill=tk.X, side=tk.BOTTOM)
-            
-            self.status_var = tk.StringVar(value="就绪")
-            ttk.Label(
-                status_frame, 
-                textvariable=self.status_var,
-                style="Subtitle.TLabel",
-                background=self.card_color # 确保背景色一致
-            ).pack(side=tk.LEFT, padx=10)
+        """配置日志系统，将日志输出到GUI"""
+@@ -74,6 +87,8 @@
+        self.url_entry.grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
+        self.url_entry.insert(0, "https://www.youtube.com/watch?v=")
 
-            # 启动日志处理线程
-            self.root.after(100, self.process_log_messages)
-            
-            self.logger.info("主界面初始化完成")
-        except Exception as e:
-            self.logger.error(f"创建主界面失败: {str(e)}")
-            self._show_fatal_error(f"创建主界面失败: {str(e)}")
-    
-    def process_log_messages(self):
-        """处理日志消息，更新日志UI"""
-        while not self.result_queue.empty():
-            try:
-                level, msg = self.result_queue.get_nowait()
-                
-                self.log_text.config(state=tk.NORMAL)
-                self.log_text.insert(tk.END, f"{msg}\n", level)
-                self.log_text.config(state=tk.DISABLED)
-                
-                self.log_text.see(tk.END)
-            except queue.Empty:
-                pass
-            except Exception as e:
-                self.logger.error(f"处理日志消息失败: {str(e)}")
+        ttk.Button(url_frame, text="获取信息", command=self.fetch_video_info).grid(row=0, column=2, padx=5)
         
-        self.root.after(100, self.process_log_messages)
-    
-    def browse_download_path(self):
-        """浏览并选择下载路径"""
-        directory = filedialog.askdirectory(initialdir=self.path_var.get())
-        if directory:
-            self.path_var.set(directory)
-            self.logger.info(f"下载路径已设置为: {directory}")
-    
+        # 批量下载支持
+        ttk.Label(url_frame, text="或批量输入URLs (每行一个):").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.urls_text = scrolledtext.ScrolledText(url_frame, wrap=tk.WORD, height=3)
+@@ -84,6 +99,20 @@
+        self.proxy_entry.grid(row=2, column=1, sticky=tk.W, pady=5, padx=5)
+        self.proxy_entry.insert(0, "http://127.0.0.1:7897")
+
+        # 视频信息预览
+        info_frame = ttk.LabelFrame(main_frame, text="视频信息预览", padding=10)
+        info_frame.pack(fill=tk.X, pady=5)
+        
+        self.title_var = tk.StringVar(value="标题: ")
+        self.duration_var = tk.StringVar(value="时长: ")
+        self.views_var = tk.StringVar(value="观看次数: ")
+        self.uploader_var = tk.StringVar(value="上传者: ")
+        
+        ttk.Label(info_frame, textvariable=self.title_var).grid(row=0, column=0, sticky=tk.W, pady=2)
+        ttk.Label(info_frame, textvariable=self.duration_var).grid(row=0, column=1, sticky=tk.W, pady=2, padx=20)
+        ttk.Label(info_frame, textvariable=self.views_var).grid(row=0, column=2, sticky=tk.W, pady=2, padx=20)
+        ttk.Label(info_frame, textvariable=self.uploader_var).grid(row=0, column=3, sticky=tk.W, pady=2, padx=20)
+        
+        # 下载选项
+        options_frame = ttk.LabelFrame(main_frame, text="下载选项", padding=10)
+        options_frame.pack(fill=tk.X, pady=5)
+@@ -97,22 +126,48 @@
+        ttk.Entry(save_path_frame, textvariable=self.save_path_var, width=50).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(save_path_frame, text="浏览...", command=self.browse_save_path).pack(side=tk.LEFT)
+
+        # 下载格式
+        # 下载格式预设
+        ttk.Label(options_frame, text="下载格式:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.format_var = tk.StringVar(value="custom")
+        format_frame = ttk.Frame(options_frame)
+        format_frame.grid(row=1, column=1, sticky=tk.W, pady=5)
+
+        ttk.Radiobutton(format_frame, text="视频或音频（MP3）", variable=self.format_var, value="custom").pack(side=tk.LEFT, padx=5)
+        
+        self.custom_format_entry = ttk.Entry(format_frame, width=10)
+        self.custom_format_entry.pack(side=tk.LEFT, padx=(5, 0))
+        self.format_preset = tk.StringVar(value="custom")
+        
+        # 预设选项
+        format_presets = [
+            ("最高质量视频", "bestvideo+bestaudio"),
+            ("720p 视频", "best[height<=720]"),
+            ("480p 视频", "best[height<=480]"),
+            ("360p 视频", "best[height<=360]"),
+            ("仅音频 (MP3)", "bestaudio"),
+            ("仅音频 (原始格式)", "bestaudio"),
+            ("自定义", "custom")
+        ]
+        
+        for i, (text, value) in enumerate(format_presets):
+            ttk.Radiobutton(format_frame, text=text, variable=self.format_preset, value=value).grid(row=i//4, column=i%4, sticky=tk.W, padx=5, pady=2)
+        
+        # 自定义格式ID
+        ttk.Label(options_frame, text="自定义格式ID:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.custom_format_entry = ttk.Entry(options_frame, width=20)
+        self.custom_format_entry.grid(row=2, column=1, sticky=tk.W, pady=5, padx=5)
+        self.custom_format_entry.insert(0, "ID号")
+        self.custom_format_entry.config(state=tk.NORMAL)
+
+        # 字幕选项
+        self.subtitle_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(options_frame, text="下载字幕", variable=self.subtitle_var).grid(row=2, column=1, sticky=tk.W, pady=5)
+        ttk.Checkbutton(options_frame, text="下载字幕", variable=self.subtitle_var).grid(row=2, column=2, sticky=tk.W, pady=5)
+        
+        # 多线程下载
+        ttk.Label(options_frame, text="多线程数:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        self.threads_var = tk.StringVar(value="4")
+        ttk.Combobox(options_frame, textvariable=self.threads_var, values=["1", "2", "4", "8", "16"], width=5).grid(row=3, column=1, sticky=tk.W, pady=5, padx=5)
+        
+        # 转码选项
+        self.transcode_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(options_frame, text="下载后转码", variable=self.transcode_var).grid(row=3, column=2, sticky=tk.W, pady=5)
+        
+        self.transcode_format = tk.StringVar(value="mp4")
+        ttk.Combobox(options_frame, textvariable=self.transcode_format, values=["mp4", "mkv", "avi", "mov", "webm"], width=10).grid(row=3, column=3, sticky=tk.W, pady=5, padx=5)
+
+        # 按钮
+        button_frame = ttk.Frame(main_frame)
+@@ -122,6 +177,7 @@
+        ttk.Button(button_frame, text="开始下载", command=self.start_download, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="终止下载", command=self.stop_download, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="清空日志", command=self.clear_logs, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="查看历史", command=self.show_history, width=15).pack(side=tk.LEFT, padx=5)
+
+        # 下载进度条
+        progress_frame = ttk.LabelFrame(main_frame, text="下载进度", padding=10)
+@@ -161,6 +217,61 @@
+        except ValueError:
+            return False
+
     def fetch_video_info(self):
-        """获取视频信息"""
+        """获取视频信息并预览"""
         url = self.url_entry.get().strip()
-        if not url:
-            self._show_error_dialog("请输入YouTube视频URL")
+        proxy = self.proxy_entry.get().strip() or None
+        
+        if not self.validate_url(url):
+            messagebox.showerror("错误", "请输入有效的 YouTube 链接")
             return
-        
-        # 验证URL格式
-        if not self._is_valid_youtube_url(url):
-            self._show_error_dialog("请输入有效的YouTube视频URL")
-            return
-        
-        self.status_var.set("正在获取视频信息...")
-        self.progress_var.set(0)
-        self.progress_text.set("正在获取视频信息...")
-        
-        # 禁用按钮防止重复点击
-        self.url_entry.config(state="disabled")
-        # 找到获取视频信息按钮并禁用
-        for widget in self.url_entry.master.winfo_children():
-            if isinstance(widget, ttk.Button) and widget.cget("text") == "获取视频信息":
-                widget.config(state="disabled")
-                break
-        
-        # 在单独线程中获取视频信息
-        threading.Thread(target=self._fetch_video_info_thread, args=(url,), daemon=True).start()
-    
-    def _is_valid_youtube_url(self, url):
-        """验证是否为有效的YouTube URL"""
-        youtube_regex = (
-            r"(https?://)?(www\.)?"
-            r"(youtube|youtu|youtube-nocookie)\.(com|be)/"
-            r"(watch\?v=|embed/|v/|shorts/|.+?\?v=)?([^&=%\?]{11})"
-        )
-        return re.match(youtube_regex, url) is not None
-    
-    def _fetch_video_info_thread(self, url):
-        """在单独线程中获取视频信息"""
-        try:
-            self.logger.info(f"开始获取视频信息: {url}")
             
-            # 准备API请求参数
-            params = {
+        self.logger.info(f"获取视频信息: {url}")
+        
+        def _fetch():
+            try:
+                ydl_opts = {
+                    'socket_timeout': 10,
+                    'proxy': proxy,
+                    'quiet': True
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info_dict = ydl.extract_info(url, download=False)
+                    
+                    title = info_dict.get('title', '未知标题')
+                    duration = info_dict.get('duration', 0)
+                    views = info_dict.get('view_count', 0)
+                    uploader = info_dict.get('uploader', '未知上传者')
+                    
+                    # 格式化时长
+                    duration_str = "未知"
+                    if duration:
+                        hours, remainder = divmod(int(duration), 3600)
+                        minutes, seconds = divmod(remainder, 60)
+                        if hours > 0:
+                            duration_str = f"{hours}小时{minutes}分{seconds}秒"
+                        else:
+                            duration_str = f"{minutes}分{seconds}秒"
+                    
+                    # 格式化观看次数
+                    views_str = f"{views:,}"
+                    
+                    self.title_var.set(f"标题: {title}")
+                    self.duration_var.set(f"时长: {duration_str}")
+                    self.views_var.set(f"观看次数: {views_str}")
+                    self.uploader_var.set(f"上传者: {uploader}")
+                    
+                    # 保存视频信息
+                    self.video_info[url] = info_dict
+                    
+                    self.result_queue.put(("success", f"成功获取视频信息: {title}"))
+            except Exception as e:
+                self.result_queue.put(("error", f"获取视频信息失败: {str(e)}"))
+        
+        # 在单独线程中获取信息
+        threading.Thread(target=_fetch, daemon=True).start()
+    
+    def query_formats(self):
+        """查询视频格式"""
+        url = self.url_entry.get().strip()
+@@ -193,36 +304,55 @@
+
+        proxy = self.proxy_entry.get().strip() or None
+        save_path = self.save_path_var.get()
+        format_id = self.custom_format_entry.get().strip()
+        format_preset = self.format_preset.get()
+        custom_format = self.custom_format_entry.get().strip()
+        download_subtitles = self.subtitle_var.get()
+        thread_count = int(self.threads_var.get())
+        transcode = self.transcode_var.get()
+        transcode_format = self.transcode_format.get()
+
+        if not format_id:
+            messagebox.showerror("错误", "ID号不能为空")
+        # 确定最终使用的格式ID
+        format_id = custom_format if format_preset == "custom" else format_preset
+        
+        if format_preset == "custom" and not format_id:
+            messagebox.showerror("错误", "自定义格式ID不能为空")
+            return
+
+        # 准备下载任务
+        self.download_tasks = urls.copy()
+        self.current_task_index = 0
+        self.total_tasks = len(urls)
+        self.abort_all_tasks = False
+        self.update_progress(0, "准备下载...")
+
+        for url in urls:
+            self.logger.info(f"添加下载任务: {url}")
+            self.download_queue.put(("download", url, proxy, save_path, format_id, download_subtitles))
+            self.download_queue.put(("download", url, proxy, save_path, format_id, download_subtitles, thread_count, transcode, transcode_format))
+
+    def stop_download(self):
+        """终止正在进行的下载"""
+        if not self.is_downloading:
+            messagebox.showinfo("提示", "当前没有正在进行的下载")
+            return
+
+        self.abort_all_tasks = True
+        self.logger.info("正在终止所有下载任务...")
+        
+        # 终止当前下载
+        if self.ydl_instance:
+            self.logger.info("正在终止下载...")
+            self.ydl_instance._download_retcode = -1  # 设置退出码强制终止
+            self.ydl_instance = None
+            self.is_downloading = False
+            self.update_progress(0, "下载已终止")
+            self.logger.info("下载已终止")
+        
+        # 等待所有线程结束
+        for task_id, thread in list(self.download_threads.items()):
+            if thread.is_alive():
+                self.logger.info(f"等待任务 {task_id} 终止...")
+                thread.join(timeout=1.0)
+        
+        self.is_downloading = False
+        self.ydl_instance = None
+        self.download_threads = {}
+        self.update_progress(0, "所有下载已终止")
+        self.logger.info("所有下载任务已终止")
+
+    def update_progress(self, percent, message):
+        """更新进度条和进度信息"""
+@@ -233,6 +363,13 @@
+        """处理下载队列"""
+        while True:
+            try:
+                if self.abort_all_tasks:
+                    # 清空队列
+                    while not self.download_queue.empty():
+                        self.download_queue.get()
+                        self.download_queue.task_done()
+                    continue
+                
+                task = self.download_queue.get(timeout=1)
+                if task[0] == "query":
+                    self._query_formats(task[1], task[2])
+@@ -242,7 +379,18 @@
+                        (self.current_task_index-1) / self.total_tasks * 100, 
+                        f"准备下载 {self.current_task_index}/{self.total_tasks}"
+                    )
+                    self._download(task[1], task[2], task[3], task[4], task[5])
+                    
+                    # 为每个下载任务创建唯一ID
+                    task_id = f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    
+                    # 在单独的线程中执行下载，以便可以独立控制每个任务
+                    thread = threading.Thread(
+                        target=self._download, 
+                        args=(task_id, task[1], task[2], task[3], task[4], task[5], task[6], task[7], task[8]),
+                        daemon=True
+                    )
+                    self.download_threads[task_id] = thread
+                    thread.start()
+                self.download_queue.task_done()
+            except queue.Empty:
+                continue
+@@ -272,19 +420,22 @@
+                    vcodec = f.get('vcodec', 'N/A')
+                    filesize = f.get('filesize', 'N/A')
+
+                    formats_info += f"ID: {format_id}, 格式: {ext}, 分辨率: {resolution}, 音频: {acodec}, 视频: {vcodec}, 大小: {filesize}\n"
+                    # 只显示常见的格式
+                    if (ext in ['mp4', 'webm', 'mkv', 'flv', 'avi'] and resolution != 'audio only') or \
+                       (acodec != 'none' and resolution == 'audio only'):
+                        formats_info += f"ID: {format_id}, 格式: {ext}, 分辨率: {resolution}, 音频: {acodec}, 视频: {vcodec}, 大小: {filesize}\n"
+
+            self.result_queue.put(("info", formats_info))
+        except Exception as e:
+            self.result_queue.put(("error", f"查询格式失败: {str(e)}"))
+
+    def _download(self, url, proxy, save_path, format_id, download_subtitles):
+    def _download(self, task_id, url, proxy, save_path, format_id, download_subtitles, thread_count, transcode, transcode_format):
+        """下载视频或音频的实际处理函数"""
+        self.is_downloading = True
+
+        try:
+            # 检查是否需要提取音频
+            is_audio = format_id.lower().startswith('audio')
+            is_audio = format_id.lower().startswith('audio') or format_id == 'bestaudio'
+
+            ydl_opts = {
+                'socket_timeout': 10,
+@@ -297,13 +448,14 @@
+                'logger': self.logger,
+                'writesubtitles': download_subtitles,
+                'writeautomaticsub': download_subtitles,
+                'subtitleslangs': ['en', 'zh-Hans', 'zh-Hant']  # 下载多种语言字幕
+                'subtitleslangs': ['en', 'zh-Hans', 'zh-Hant'],  # 下载多种语言字幕
+                'concurrent_fragments': thread_count  # 多线程下载
+            }
+
+            if is_audio:
+                ydl_opts['postprocessors'] = [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredcodec': 'mp3' if format_id == 'bestaudio' else 'best',
+                    'preferredquality': '192',
+                }]
+
+@@ -321,14 +473,26 @@
+            # 开始下载
+            info_dict = self.ydl_instance.extract_info(url, download=True)
+
+            if self.is_downloading:  # 确保下载没有被用户终止
+                self.result_queue.put(("success", f"下载完成: {info_dict.get('title')}"))
+                self.update_progress(
+                    self.current_task_index / self.total_tasks * 100, 
+                    f"完成 {self.current_task_index}/{self.total_tasks}"
+                )
+            else:
+            if self.abort_all_tasks:  # 确保下载没有被用户终止
+                self.result_queue.put(("info", f"下载已取消: {info_dict.get('title')}"))
+                return
+            
+            self.result_queue.put(("success", f"下载完成: {info_dict.get('title')}"))
+            self.update_progress(
+                self.current_task_index / self.total_tasks * 100, 
+                f"完成 {self.current_task_index}/{self.total_tasks}"
+            )
+            
+            # 保存下载历史
+            self.save_download_history(url, info_dict.get('title'), format_id, save_path)
+            
+            # 如果启用了转码，执行转码
+            if transcode:
+                original_file = f"{save_path}/{info_dict.get('title', 'video')}.{info_dict.get('ext', 'mp4')}"
+                transcoded_file = f"{save_path}/{info_dict.get('title', 'video')}.{transcode_format}"
+                
+                self.result_queue.put(("info", f"开始转码: {original_file} -> {transcoded_file}"))
+                self.transcode_file(original_file, transcoded_file)
+
+        except Exception as e:
+            if 'yt_dlp.utils.DownloadError' in str(type(e)) or 'Network' in str(e) or '403' in str(e):
+@@ -338,9 +502,14 @@
+        finally:
+            self.is_downloading = False
+            self.ydl_instance = None
+            if task_id in self.download_threads:
+                del self.download_threads[task_id]
+
+    def download_hook(self, d):
+        """下载进度回调函数"""
+        if self.abort_all_tasks:
+            return
+            
+        if d['status'] == 'downloading':
+            percent = d.get('_percent_str', '?')
+            speed = d.get('_speed_str', '?')
+@@ -398,6 +567,152 @@
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.delete(1.0, tk.END)
+        self.log_text.config(state=tk.DISABLED)
+    
+    def load_download_history(self):
+        """加载下载历史"""
+        try:
+            if os.path.exists("download_history.json"):
+                with open("download_history.json", "r", encoding="utf-8") as f:
+                    self.download_history = json.load(f)
+            else:
+                self.download_history = []
+        except Exception as e:
+            self.download_history = []
+            self.logger.error(f"加载下载历史失败: {str(e)}")
+    
+    def save_download_history(self, url, title, format_id, save_path):
+        """保存下载历史"""
+        try:
+            history_entry = {
                 "url": url,
-                "type": "json"
+                "title": title,
+                "format_id": format_id,
+                "save_path": save_path,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
             
-            # 发送API请求
-            response = requests.get(self.api_base_url, params=params, timeout=self.api_timeout)
-            response.raise_for_status()
+            self.download_history.append(history_entry)
             
-            # 解析JSON响应
-            data = response.json()
+            # 只保留最近100条记录
+            if len(self.download_history) > 100:
+                self.download_history = self.download_history[-100:]
             
-            # 检查API返回状态
-            if data.get("code") != 200 or data.get("status") != "success":
-                error_msg = data.get("msg", "获取视频信息失败")
-                self.logger.error(f"API请求失败: {error_msg}")
-                self.root.after(0, lambda: self._show_error_dialog(f"获取视频信息失败: {error_msg}"))
-                self.root.after(0, lambda: self._reset_ui_state())
-                return
-            
-            # 提取视频信息
-            video_info = data.get("data", {})
-            
-            if not video_info:
-                self.logger.error("未获取到视频信息")
-                self.root.after(0, lambda: self._show_error_dialog("未获取到视频信息"))
-                self.root.after(0, lambda: self._reset_ui_state())
-                return
-            
-            # 缓存视频信息
-            self.video_info = video_info
-            
-            # 更新UI
-            self.root.after(0, lambda: self._update_video_info_ui())
-            
-            self.logger.info(f"成功获取视频信息: {video_info.get('title', '未知标题')}")
+            with open("download_history.json", "w", encoding="utf-8") as f:
+                json.dump(self.download_history, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            self.logger.error(f"获取视频信息失败: {str(e)}")
-            self.root.after(0, lambda: self._show_error_dialog(f"获取视频信息失败: {str(e)}"))
-            self.root.after(0, lambda: self._reset_ui_state())
+            self.logger.error(f"保存下载历史失败: {str(e)}")
     
-    def _update_video_info_ui(self):
-        """更新视频信息UI"""
-        # 更新标题
-        title = self.video_info.get("title", "未知标题")
-        self.title_var.set(title)
-        
-        # 更新时长
-        duration = self.video_info.get("duration", "未知")
-        self.duration_var.set(f"时长: {duration}")
-        
-        # 更新观看次数
-        views = self.video_info.get("views", "未知")
-        self.views_var.set(f"观看次数: {views}")
-        
-        # 更新发布日期
-        pub_date = self.video_info.get("pub_date", "未知")
-        self.date_var.set(f"发布日期: {pub_date}")
-        
-        # 更新可用格式
-        formats = self.video_info.get("formats", [])
-        self.available_formats = formats
-        
-        # 准备格式选项
-        format_options = []
-        for fmt in formats:
-            quality = fmt.get("quality", "未知质量")
-            ext = fmt.get("ext", "未知格式")
-            size = fmt.get("size", "未知大小")
-            format_options.append(f"{quality} ({ext}, {size})")
-        
-        # 更新格式选择下拉框
-        self.format_combobox["values"] = format_options
-        if format_options:
-            self.format_combobox.current(0)
-            self.format_combobox.config(state="readonly")
-            # 找到开始下载按钮并启用
-            for widget in self.format_combobox.master.winfo_children():
-                if isinstance(widget, ttk.Button) and widget.cget("text") == "开始下载":
-                    widget.config(state="normal")
-                    break
-        
-        # 更新缩略图
-        thumb_url = self.video_info.get("thumb", "")
-        if thumb_url:
-            self._update_thumbnail(thumb_url)
-        
-        self.status_var.set("就绪")
-        self.progress_text.set("等待下载...")
-        
-        # 恢复URL输入框和获取视频信息按钮
-        self.url_entry.config(state="normal")
-        for widget in self.url_entry.master.winfo_children():
-            if isinstance(widget, ttk.Button) and widget.cget("text") == "获取视频信息":
-                widget.config(state="normal")
-                break
-    
-    def _update_thumbnail(self, thumb_url):
-        """更新视频缩略图"""
-        # 由于无法直接加载网络图片，我们创建一个简单的缩略图占位符
-        self.thumb_canvas.delete("all")
-        self.thumb_canvas.create_rectangle(0, 0, 320, 180, fill=self.secondary_color)
-        
-        # 添加视频标题
-        title = self.video_info.get("title", "视频缩略图")
-        # 限制标题长度
-        if len(title) > 40:
-            title = title[:40] + "..."
-        
-        self.thumb_canvas.create_text(160, 90, text=title, fill=self.text_color, font=("Microsoft YaHei UI", 12), width=300)
-        
-        # 添加播放按钮
-        self.thumb_canvas.create_polygon(
-            140, 80, 200, 120, 140, 160, 
-            fill=self.primary_color, outline=""
-        )
-    
-    def _reset_ui_state(self):
-        """重置UI状态"""
-        self.status_var.set("就绪")
-        self.progress_var.set(0)
-        self.progress_text.set("等待下载...")
-        
-        self.url_entry.config(state="normal")
-        for widget in self.url_entry.master.winfo_children():
-            if isinstance(widget, ttk.Button) and widget.cget("text") == "获取视频信息":
-                widget.config(state="normal")
-                break
-        
-        self.format_combobox["values"] = []
-        self.format_combobox.set("")
-        self.format_combobox.config(state="disabled")
-        
-        for widget in self.format_combobox.master.winfo_children():
-            if isinstance(widget, ttk.Button) and widget.cget("text") == "开始下载":
-                widget.config(state="disabled")
-                break
-    
-    def start_download(self):
-        """开始下载视频"""
-        if not self.video_info:
-            self._show_error_dialog("请先获取视频信息")
+    def show_history(self):
+        """显示下载历史"""
+        if not self.download_history:
+            messagebox.showinfo("下载历史", "暂无下载历史记录")
             return
         
-        # 获取选中的格式
-        selected_format_index = self.format_combobox.current()
-        if selected_format_index < 0 or selected_format_index >= len(self.available_formats):
-            self._show_error_dialog("请选择下载格式")
-            return
+        history_window = tk.Toplevel(self.root)
+        history_window.title("下载历史")
+        history_window.geometry("800x500")
+        history_window.minsize(700, 400)
         
-        selected_format = self.available_formats[selected_format_index]
-        download_url = selected_format.get("url", "")
+        # 创建表格
+        columns = ("序号", "标题", "URL", "格式", "保存路径", "时间")
+        tree = ttk.Treeview(history_window, columns=columns, show="headings")
         
-        if not download_url:
-            self._show_error_dialog("无法获取下载链接")
-            return
+        # 设置列宽和标题
+        for col in columns:
+            tree.heading(col, text=col)
+            if col == "标题":
+                tree.column(col, width=200)
+            elif col == "URL":
+                tree.column(col, width=300)
+            elif col == "保存路径":
+                tree.column(col, width=150)
+            else:
+                tree.column(col, width=80)
         
-        # 获取下载路径
-        download_path = self.path_var.get()
-        if not download_path or not os.path.exists(download_path):
-            self._show_error_dialog("请选择有效的下载路径")
-            return
+        # 添加数据
+        for i, entry in enumerate(reversed(self.download_history), 1):
+            tree.insert("", "end", values=(
+                i,
+                entry["title"],
+                entry["url"],
+                entry["format_id"],
+                entry["save_path"],
+                entry["timestamp"]
+            ))
         
-        # 生成文件名
-        title = self.video_info.get("title", "video")
-        # 替换不合法的文件名字符
-        safe_title = re.sub(r"[\\/*?:\"<>|]", "_", title)
-        ext = selected_format.get("ext", "mp4")
-        filename = f"{safe_title}.{ext}"
-        full_path = os.path.join(download_path, filename)
+        # 添加滚动条
+        scrollbar = ttk.Scrollbar(history_window, orient="vertical", command=tree.yview)
+        tree.configure(yscroll=scrollbar.set)
         
-        # 更新UI状态
-        self.status_var.set("准备下载...")
-        self.progress_var.set(0)
-        self.progress_text.set("准备下载...")
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        tree.pack(fill=tk.BOTH, expand=True)
         
-        # 禁用下载按钮
-        for widget in self.format_combobox.master.winfo_children():
-            if isinstance(widget, ttk.Button) and widget.cget("text") == "开始下载":
-                widget.config(state="disabled")
-                break
+        # 添加双击打开文件位置功能
+        def open_file_location(event):
+            item = tree.selection()[0]
+            values = tree.item(item, "values")
+            path = values[4]
+            
+            if platform.system() == "Windows":
+                os.startfile(path)
+            elif platform.system() == "Darwin":  # macOS
+                subprocess.run(["open", path])
+            else:  # Linux
+                subprocess.run(["xdg-open", path])
         
-        # 在单独线程中下载视频
-        threading.Thread(
-            target=self._download_video_thread, 
-            args=(download_url, full_path, selected_format), 
-            daemon=True
-        ).start()
+        tree.bind("<Double-1>", open_file_location)
     
-    def _download_video_thread(self, url, save_path, format_info):
-        """在单独线程中下载视频"""
+    def transcode_file(self, input_file, output_file):
+        """转码文件"""
         try:
-            self.logger.info(f"开始下载视频: {save_path}")
-            self.root.after(0, lambda: self.progress_text.set("连接到服务器..."))
+            # 检查ffmpeg是否存在
+            try:
+                subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            except (subprocess.SubprocessError, FileNotFoundError):
+                self.result_queue.put(("error", "转码失败: 未找到ffmpeg。请确保ffmpeg已安装并添加到系统PATH中。"))
+                return
             
-            # 发送请求获取视频
-            response = requests.get(url, stream=True, timeout=self.api_timeout)
-            response.raise_for_status()
+            # 构建ffmpeg命令
+            cmd = [
+                "ffmpeg",
+                "-i", input_file,
+                "-c:v", "libx264",  # 使用x264编码
+                "-preset", "medium",  # 编码速度预设
+                "-crf", "23",        # 质量控制
+                "-c:a", "aac",       # 音频编码
+                "-strict", "experimental",
+                "-y",                # 覆盖已存在文件
+                output_file
+            ]
             
-            # 获取文件大小
-            total_size = int(response.headers.get("content-length", 0))
-            block_size = 1024
-            downloaded_size = 0
+            # 执行转码
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
             
-            # 创建临时文件
-            temp_file = save_path + ".part"
+            # 监控转码进度
+            while True:
+                output = process.stderr.readline()
+                if output == '' and process.poll() is not None:
+                    break
+                if output:
+                    # 可以在这里解析输出以获取进度信息
+                    pass
             
-            self.root.after(0, lambda: self.progress_text.set("开始下载..."))
+            return_code = process.wait()
             
-            with open(temp_file, "wb") as f:
-                for data in response.iter_content(block_size):
-                    if not data:
-                        break
-                    
-                    f.write(data)
-                    downloaded_size += len(data)
-                    
-                    # 计算进度百分比
-                    progress = (downloaded_size / total_size) * 100 if total_size > 0 else 0
-                    
-                    # 更新进度条
-                    self.root.after(0, lambda p=progress: self.progress_var.set(p))
-                    
-                    # 更新进度文本
-                    downloaded_mb = downloaded_size / (1024 * 1024)
-                    total_mb = total_size / (1024 * 1024)
-                    progress_text = f"下载中: {downloaded_mb:.2f}MB / {total_mb:.2f}MB ({progress:.1f}%)"
-                    self.root.after(0, lambda t=progress_text: self.progress_text.set(t))
-            
-            # 下载完成，重命名临时文件
-            os.rename(temp_file, save_path)
-            
-            self.logger.info(f"视频下载完成: {save_path}")
-            self.root.after(0, lambda: self.progress_text.set("下载完成"))
-            self.root.after(0, lambda: self.status_var.set("就绪"))
-            self.root.after(0, lambda: messagebox.showinfo("成功", f"视频下载完成:\n{save_path}"))
-            
-            # 恢复下载按钮
-            self.root.after(0, lambda: 
-                [widget.config(state="normal") for widget in self.format_combobox.master.winfo_children() 
-                 if isinstance(widget, ttk.Button) and widget.cget("text") == "开始下载"])
+            if return_code == 0:
+                self.result_queue.put(("success", f"转码完成: {output_file}"))
+                # 删除原始文件（可选）
+                # os.remove(input_file)
+            else:
+                self.result_queue.put(("error", f"转码失败，返回代码: {return_code}"))
+        
         except Exception as e:
-            self.logger.error(f"下载视频失败: {str(e)}")
-            self.root.after(0, lambda: self.progress_text.set("下载失败"))
-            self.root.after(0, lambda: self.status_var.set("就绪"))
-            self.root.after(0, lambda: self._show_error_dialog(f"下载视频失败: {str(e)}"))
-            
-            # 清理临时文件
-            if os.path.exists(save_path + ".part"):
-                os.remove(save_path + ".part")
-            
-            # 恢复下载按钮
-            self.root.after(0, lambda: 
-                [widget.config(state="normal") for widget in self.format_combobox.master.winfo_children() 
-                 if isinstance(widget, ttk.Button) and widget.cget("text") == "开始下载"])
+            self.result_queue.put(("error", f"转码过程中出错: {str(e)}"))
 
-def main():
-    root = tk.Tk()
-    app = YouTubeDownloaderApp(root)
-    root.mainloop()
-
-if __name__ == "__main__":
-    main()
+class QueueHandler(logging.Handler):
+    """日志处理器，将日志消息放入队列"""
