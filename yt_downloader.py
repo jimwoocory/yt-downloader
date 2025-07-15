@@ -12,15 +12,23 @@ from datetime import datetime
 import json
 import subprocess
 import platform
-import ffmpeg
 import tempfile
 import requests
+
+class QueueHandler(logging.Handler):
+    """日志处理器，将日志消息放入队列"""
+    def __init__(self, log_queue):
+        super().__init__()
+        self.log_queue = log_queue
+    
+    def emit(self, record):
+        self.log_queue.put((record.levelname, self.format(record)))
 
 class YouTubeDownloaderApp:
     def __init__(self, root):
         self.root = root
         self.root.title("YouTube 下载器")
-        self.root.geometry("1000x800")  # 增加窗口高度以容纳新组件
+        self.root.geometry("1000x800")
         self.root.minsize(900, 750)
         
         # 设置中文字体支持
@@ -49,6 +57,89 @@ class YouTubeDownloaderApp:
         # 配置日志
         self.setup_logging()
         
+        # 工具目录
+        self.tool_dir = os.path.join(os.path.expanduser("~"), ".youtube_downloader")
+        os.makedirs(self.tool_dir, exist_ok=True)
+        
+        # 检查并下载依赖
+        self.check_dependencies()
+    
+    def setup_logging(self):
+        """配置日志系统，将日志输出到GUI"""
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+        
+        # 创建日志处理器，将日志输出到GUI
+        self.log_handler = QueueHandler(self.result_queue)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        self.log_handler.setFormatter(formatter)
+        self.logger.addHandler(self.log_handler)
+    
+    def check_dependencies(self):
+        """检查并下载必要的依赖"""
+        # 创建依赖检查窗口
+        self.dependency_window = tk.Toplevel(self.root)
+        self.dependency_window.title("初始化")
+        self.dependency_window.geometry("400x200")
+        self.dependency_window.resizable(False, False)
+        self.dependency_window.transient(self.root)
+        self.dependency_window.grab_set()
+        
+        # 居中显示
+        self.dependency_window.update_idletasks()
+        width = self.dependency_window.winfo_width()
+        height = self.dependency_window.winfo_height()
+        x = (self.dependency_window.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.dependency_window.winfo_screenheight() // 2) - (height // 2)
+        self.dependency_window.geometry('{}x{}+{}+{}'.format(width, height, x, y))
+        
+        # 添加提示信息
+        ttk.Label(
+            self.dependency_window, 
+            text="正在下载重要依赖文件yt-dlp和FFmpeg组件！",
+            font=('SimHei', 12)
+        ).pack(pady=20)
+        
+        # 添加进度条
+        self.dependency_progress_var = tk.DoubleVar()
+        self.dependency_progress_bar = ttk.Progressbar(
+            self.dependency_window, 
+            variable=self.dependency_progress_var, 
+            length=300, 
+            mode='determinate'
+        )
+        self.dependency_progress_bar.pack(pady=10)
+        
+        # 添加状态标签
+        self.dependency_status = tk.StringVar(value="准备下载...")
+        ttk.Label(
+            self.dependency_window, 
+            textvariable=self.dependency_status,
+            font=('SimHei', 10)
+        ).pack(pady=10)
+        
+        # 启动依赖检查线程
+        threading.Thread(target=self._check_dependencies_thread, daemon=True).start()
+    
+    def _check_dependencies_thread(self):
+        """在单独线程中检查并下载依赖"""
+        try:
+            # 检查并下载yt-dlp
+            self.ydl_path = self._get_yt_dlp_path()
+            
+            # 检查并下载FFmpeg
+            self.ffmpeg_path = self._get_ffmpeg_path()
+            
+            # 所有依赖都已准备好，关闭依赖窗口并创建主界面
+            self.root.after(0, self._create_main_interface)
+        except Exception as e:
+            self.root.after(0, lambda: messagebox.showerror("错误", f"下载依赖失败: {str(e)}"))
+            self.root.after(0, self.root.destroy)
+    
+    def _create_main_interface(self):
+        """创建主界面"""
+        self.dependency_window.destroy()
+        
         # 创建界面
         self.create_widgets()
         
@@ -66,97 +157,235 @@ class YouTubeDownloaderApp:
         self.ydl_instance = None
         self.is_downloading = False
         self.download_threads = {}  # 跟踪所有下载线程
-        
-        # 自动获取或下载ffmpeg
-        self.ffmpeg_path = self._get_ffmpeg_path()
-    
-    def setup_logging(self):
-        """配置日志系统，将日志输出到GUI"""
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.INFO)
-        
-        # 创建日志处理器，将日志输出到GUI
-        self.log_handler = QueueHandler(self.result_queue)
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        self.log_handler.setFormatter(formatter)
-        self.logger.addHandler(self.log_handler)
     
     def _get_ffmpeg_path(self):
         """自动检测或下载FFmpeg二进制文件"""
-        # 检查系统路径中是否已安装ffmpeg
-        if self._check_ffmpeg_exists():
-            self.logger.info("在系统路径中找到FFmpeg")
-            return "ffmpeg"  # 使用系统安装的ffmpeg
-            
-        # 创建临时目录存放ffmpeg
-        temp_dir = tempfile.gettempdir()
-        ffmpeg_dir = os.path.join(temp_dir, "ffmpeg_bin")
+        ffmpeg_dir = os.path.join(self.tool_dir, "ffmpeg")
         os.makedirs(ffmpeg_dir, exist_ok=True)
+        
+        # 根据操作系统确定FFmpeg文件路径
+        if platform.system() == "Windows":
+            ffmpeg_exe = "ffmpeg.exe"
+            ffplay_exe = "ffplay.exe"
+            ffprobe_exe = "ffprobe.exe"
+        else:  # macOS和Linux
+            ffmpeg_exe = "ffmpeg"
+            ffplay_exe = "ffplay"
+            ffprobe_exe = "ffprobe"
+        
+        ffmpeg_path = os.path.join(ffmpeg_dir, ffmpeg_exe)
+        ffplay_path = os.path.join(ffmpeg_dir, ffplay_exe)
+        ffprobe_path = os.path.join(ffmpeg_dir, ffprobe_exe)
+        
+        # 检查所有三个文件是否存在
+        if all(os.path.exists(path) for path in [ffmpeg_path, ffplay_path, ffprobe_path]):
+            self.logger.info("找到已安装的FFmpeg")
+            return ffmpeg_path
+        
+        # 更新状态
+        self.root.after(0, lambda: self.dependency_status.set("准备下载FFmpeg..."))
+        self.root.after(0, lambda: self.dependency_progress_var.set(0))
         
         # 根据操作系统下载对应的ffmpeg二进制文件
         if platform.system() == "Windows":
             ffmpeg_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-            ffmpeg_path = os.path.join(ffmpeg_dir, "ffmpeg.exe")
         elif platform.system() == "Darwin":  # macOS
             ffmpeg_url = "https://evermeet.cx/ffmpeg/ffmpeg-latest.zip"
-            ffmpeg_path = os.path.join(ffmpeg_dir, "ffmpeg")
         else:  # Linux
             ffmpeg_url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
-            ffmpeg_path = os.path.join(ffmpeg_dir, "ffmpeg")
         
-        # 如果文件不存在，则下载
-        if not os.path.exists(ffmpeg_path):
-            self.logger.info(f"下载FFmpeg到: {ffmpeg_path}")
-            try:
-                self._download_ffmpeg(ffmpeg_url, ffmpeg_dir)
-                # 添加执行权限
-                if platform.system() != "Windows":
-                    os.chmod(ffmpeg_path, 0o755)
-                self.logger.info("FFmpeg下载完成")
-            except Exception as e:
-                self.logger.error(f"下载FFmpeg失败: {str(e)}")
-                return None
-                
-        return ffmpeg_path
-        
-    def _check_ffmpeg_exists(self):
-        """检查系统中是否存在ffmpeg"""
         try:
-            subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-            return True
-        except (subprocess.SubprocessError, FileNotFoundError):
-            return False
+            # 下载FFmpeg
+            self.root.after(0, lambda: self.dependency_status.set("正在下载FFmpeg..."))
+            self._download_file_with_progress(ffmpeg_url, ffmpeg_dir)
             
-    def _download_ffmpeg(self, url, target_dir):
-        """下载并解压FFmpeg二进制文件"""
-        # 下载文件
+            # 更新进度
+            self.root.after(0, lambda: self.dependency_progress_var.set(70))
+            self.root.after(0, lambda: self.dependency_status.set("正在解压FFmpeg..."))
+            
+            # 解压文件
+            filename = os.path.basename(urlparse(ffmpeg_url).path)
+            download_path = os.path.join(ffmpeg_dir, filename)
+            
+            if filename.endswith('.zip'):
+                import zipfile
+                with zipfile.ZipFile(download_path, 'r') as zip_ref:
+                    # 查找包含ffmpeg的目录
+                    namelist = zip_ref.namelist()
+                    ffmpeg_found = False
+                    ffplay_found = False
+                    ffprobe_found = False
+                    
+                    # 首先查找根目录中的文件
+                    for name in namelist:
+                        if name.endswith(ffmpeg_exe) and not ffmpeg_found:
+                            zip_ref.extract(name, ffmpeg_dir)
+                            os.rename(os.path.join(ffmpeg_dir, name), ffmpeg_path)
+                            ffmpeg_found = True
+                        elif name.endswith(ffplay_exe) and not ffplay_found:
+                            zip_ref.extract(name, ffmpeg_dir)
+                            os.rename(os.path.join(ffmpeg_dir, name), ffplay_path)
+                            ffplay_found = True
+                        elif name.endswith(ffprobe_exe) and not ffprobe_found:
+                            zip_ref.extract(name, ffmpeg_dir)
+                            os.rename(os.path.join(ffmpeg_dir, name), ffprobe_path)
+                            ffprobe_found = True
+                    
+                    # 如果在根目录中找不到，则在子目录中查找
+                    if not (ffmpeg_found and ffplay_found and ffprobe_found):
+                        for name in namelist:
+                            if '/' in name or '\\' in name:  # 子目录中的文件
+                                dir_name = os.path.dirname(name)
+                                if name.endswith(ffmpeg_exe) and not ffmpeg_found:
+                                    zip_ref.extract(name, ffmpeg_dir)
+                                    os.rename(os.path.join(ffmpeg_dir, name), ffmpeg_path)
+                                    ffmpeg_found = True
+                                elif name.endswith(ffplay_exe) and not ffplay_found:
+                                    zip_ref.extract(name, ffmpeg_dir)
+                                    os.rename(os.path.join(ffmpeg_dir, name), ffplay_path)
+                                    ffplay_found = True
+                                elif name.endswith(ffprobe_exe) and not ffprobe_found:
+                                    zip_ref.extract(name, ffmpeg_dir)
+                                    os.rename(os.path.join(ffmpeg_dir, name), ffprobe_path)
+                                    ffprobe_found = True
+            elif filename.endswith(('.tar.gz', '.tar.xz')):
+                import tarfile
+                with tarfile.open(download_path, 'r') as tar_ref:
+                    # 查找包含ffmpeg的目录
+                    namelist = tar_ref.getnames()
+                    ffmpeg_found = False
+                    ffplay_found = False
+                    ffprobe_found = False
+                    
+                    # 首先查找根目录中的文件
+                    for name in namelist:
+                        if name.endswith(ffmpeg_exe) and not ffmpeg_found:
+                            tar_ref.extract(name, ffmpeg_dir)
+                            os.rename(os.path.join(ffmpeg_dir, name), ffmpeg_path)
+                            ffmpeg_found = True
+                        elif name.endswith(ffplay_exe) and not ffplay_found:
+                            tar_ref.extract(name, ffmpeg_dir)
+                            os.rename(os.path.join(ffmpeg_dir, name), ffplay_path)
+                            ffplay_found = True
+                        elif name.endswith(ffprobe_exe) and not ffprobe_found:
+                            tar_ref.extract(name, ffmpeg_dir)
+                            os.rename(os.path.join(ffmpeg_dir, name), ffprobe_path)
+                            ffprobe_found = True
+                    
+                    # 如果在根目录中找不到，则在子目录中查找
+                    if not (ffmpeg_found and ffplay_found and ffprobe_found):
+                        for name in namelist:
+                            if '/' in name or '\\' in name:  # 子目录中的文件
+                                dir_name = os.path.dirname(name)
+                                if name.endswith(ffmpeg_exe) and not ffmpeg_found:
+                                    tar_ref.extract(name, ffmpeg_dir)
+                                    os.rename(os.path.join(ffmpeg_dir, name), ffmpeg_path)
+                                    ffmpeg_found = True
+                                elif name.endswith(ffplay_exe) and not ffplay_found:
+                                    tar_ref.extract(name, ffmpeg_dir)
+                                    os.rename(os.path.join(ffmpeg_dir, name), ffplay_path)
+                                    ffplay_found = True
+                                elif name.endswith(ffprobe_exe) and not ffprobe_found:
+                                    tar_ref.extract(name, ffmpeg_dir)
+                                    os.rename(os.path.join(ffmpeg_dir, name), ffprobe_path)
+                                    ffprobe_found = True
+            
+            # 清理下载的压缩文件
+            if os.path.exists(download_path):
+                os.remove(download_path)
+            
+            # 添加执行权限
+            for file_path in [ffmpeg_path, ffplay_path, ffprobe_path]:
+                if os.path.exists(file_path) and platform.system() != "Windows":
+                    os.chmod(file_path, 0o755)
+            
+            # 更新进度
+            self.root.after(0, lambda: self.dependency_progress_var.set(100))
+            self.root.after(0, lambda: self.dependency_status.set("FFmpeg下载完成"))
+            
+            self.logger.info("FFmpeg下载完成")
+            return ffmpeg_path
+        except Exception as e:
+            self.logger.error(f"下载FFmpeg失败: {str(e)}")
+            raise
+    
+    def _get_yt_dlp_path(self):
+        """自动检测或下载yt-dlp二进制文件"""
+        yt_dlp_dir = os.path.join(self.tool_dir, "yt-dlp")
+        os.makedirs(yt_dlp_dir, exist_ok=True)
+        
+        # 根据操作系统确定yt-dlp文件路径
+        if platform.system() == "Windows":
+            yt_dlp_exe = "yt-dlp.exe"
+        else:  # macOS和Linux
+            yt_dlp_exe = "yt-dlp"
+        
+        yt_dlp_path = os.path.join(yt_dlp_dir, yt_dlp_exe)
+        
+        # 检查文件是否存在
+        if os.path.exists(yt_dlp_path):
+            self.logger.info("找到已安装的yt-dlp")
+            return yt_dlp_path
+        
+        # 更新状态
+        self.root.after(0, lambda: self.dependency_status.set("准备下载yt-dlp..."))
+        self.root.after(0, lambda: self.dependency_progress_var.set(0))
+        
+        # 根据操作系统下载对应的yt-dlp二进制文件
+        if platform.system() == "Windows":
+            yt_dlp_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+        else:  # macOS和Linux
+            yt_dlp_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
+        
+        try:
+            # 下载yt-dlp
+            self.root.after(0, lambda: self.dependency_status.set("正在下载yt-dlp..."))
+            self._download_file_with_progress(yt_dlp_url, yt_dlp_dir)
+            
+            # 更新进度
+            self.root.after(0, lambda: self.dependency_progress_var.set(100))
+            self.root.after(0, lambda: self.dependency_status.set("yt-dlp下载完成"))
+            
+            # 添加执行权限
+            if platform.system() != "Windows":
+                os.chmod(yt_dlp_path, 0o755)
+            
+            self.logger.info("yt-dlp下载完成")
+            return yt_dlp_path
+        except Exception as e:
+            self.logger.error(f"下载yt-dlp失败: {str(e)}")
+            raise
+    
+    def _download_file_with_progress(self, url, target_dir):
+        """下载文件并显示进度"""
         filename = os.path.basename(urlparse(url).path)
-        download_path = os.path.join(target_dir, filename)
+        target_path = os.path.join(target_dir, filename)
         
-        self.logger.info(f"开始下载FFmpeg，文件大小约100MB，请稍候...")
+        try:
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+            
+            total_size = int(response.headers.get('content-length', 0))
+            block_size = 8192
+            downloaded_size = 0
+            
+            with open(target_path, 'wb') as f:
+                for data in response.iter_content(block_size):
+                    if self.abort_all_tasks:
+                        raise Exception("下载已取消")
+                    
+                    downloaded_size += len(data)
+                    f.write(data)
+                    
+                    # 更新进度条
+                    progress = (downloaded_size / total_size) * 100
+                    self.root.after(0, lambda p=progress: self.dependency_progress_var.set(p))
         
-        with requests.get(url, stream=True) as r:
-            r.raise_for_status()
-            with open(download_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        
-        self.logger.info(f"FFmpeg下载完成，正在解压...")
-        
-        # 解压文件
-        if filename.endswith('.zip'):
-            import zipfile
-            with zipfile.ZipFile(download_path, 'r') as zip_ref:
-                zip_ref.extractall(target_dir)
-        elif filename.endswith(('.tar.gz', '.tar.xz')):
-            import tarfile
-            with tarfile.open(download_path, 'r') as tar_ref:
-                tar_ref.extractall(target_dir)
-                
-        # 清理下载的压缩文件
-        os.remove(download_path)
-        
-        self.logger.info(f"FFmpeg准备就绪")
+        except Exception as e:
+            # 清理不完整的下载
+            if os.path.exists(target_path):
+                os.remove(target_path)
+            raise
     
     def create_widgets(self):
         """创建GUI界面组件"""
@@ -342,6 +571,11 @@ class YouTubeDownloaderApp:
                     'quiet': True
                 }
                 
+                # 如果指定了yt-dlp路径，则使用它
+                if self.ydl_path:
+                    os.environ['YT_DLP_PATH'] = self.ydl_path
+                    self.logger.info(f"使用yt-dlp路径: {self.ydl_path}")
+                
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info_dict = ydl.extract_info(url, download=False)
                     
@@ -396,6 +630,11 @@ class YouTubeDownloaderApp:
                     'proxy': proxy,
                     'quiet': True
                 }
+                
+                # 如果指定了yt-dlp路径，则使用它
+                if self.ydl_path:
+                    os.environ['YT_DLP_PATH'] = self.ydl_path
+                    self.logger.info(f"使用yt-dlp路径: {self.ydl_path}")
                 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     self.logger.info("正在获取视频信息...")
@@ -485,322 +724,4 @@ class YouTubeDownloaderApp:
         
         # 确定最终使用的格式ID
         video_format = self.video_format_manual.get() or self.video_format_var.get()
-        audio_format = self.audio_format_manual.get() or self.audio_format_var.get()
-        
-        if video_format == "none" and audio_format != "none":
-            format_id = audio_format
-        elif audio_format == "none" and video_format != "none":
-            format_id = video_format
-        elif video_format != "none" and audio_format != "none":
-            format_id = f"{video_format}+{audio_format}"
-        else:
-            messagebox.showerror("错误", "请至少选择一种视频或音频格式")
-            return
-        
-        # 检查是否需要提取音频
-        is_audio = format_id.lower().startswith('audio') or format_id == 'bestaudio'
-        
-        # 准备下载任务
-        self.download_tasks = urls.copy()
-        self.current_task_index = 0
-        self.total_tasks = len(urls)
-        self.abort_all_tasks = False
-        self.update_progress(0, "准备下载...")
-        
-        for url in urls:
-            self.logger.info(f"添加下载任务: {url}")
-            self.download_queue.put(("download", url, proxy, save_path, format_id, download_subtitles, thread_count, transcode, transcode_format))
-    
-    def stop_download(self):
-        """终止正在进行的下载"""
-        if not self.is_downloading:
-            messagebox.showinfo("提示", "当前没有正在进行的下载")
-            return
-            
-        self.abort_all_tasks = True
-        self.logger.info("正在终止所有下载任务...")
-        
-        # 终止当前下载
-        if self.ydl_instance:
-            self.ydl_instance._download_retcode = -1  # 设置退出码强制终止
-        
-        # 等待所有线程结束
-        for task_id, thread in list(self.download_threads.items()):
-            if thread.is_alive():
-                self.logger.info(f"等待任务 {task_id} 终止...")
-                thread.join(timeout=1.0)
-        
-        self.is_downloading = False
-        self.ydl_instance = None
-        self.download_threads = {}
-        self.update_progress(0, "所有下载已终止")
-        self.logger.info("所有下载任务已终止")
-    
-    def update_progress(self, percent, message):
-        """更新进度条和进度信息"""
-        self.progress_var.set(percent)
-        self.progress_label.config(text=message)
-    
-    def process_queue(self):
-        """处理下载队列"""
-        while True:
-            try:
-                if self.abort_all_tasks:
-                    # 清空队列
-                    while not self.download_queue.empty():
-                        self.download_queue.get()
-                        self.download_queue.task_done()
-                    continue
-                
-                task = self.download_queue.get(timeout=1)
-                if task[0] == "query":
-                    self._query_formats(task[1], task[2])
-                elif task[0] == "download":
-                    self.current_task_index += 1
-                    self.update_progress(
-                        (self.current_task_index-1) / self.total_tasks * 100, 
-                        f"准备下载 {self.current_task_index}/{self.total_tasks}"
-                    )
-                    
-                    # 为每个下载任务创建唯一ID
-                    task_id = f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                    
-                    # 在单独的线程中执行下载，以便可以独立控制每个任务
-                    thread = threading.Thread(
-                        target=self._download, 
-                        args=(task_id, task[1], task[2], task[3], task[4], task[5], task[6], task[7], task[8]),
-                        daemon=True
-                    )
-                    self.download_threads[task_id] = thread
-                    thread.start()
-                self.download_queue.task_done()
-            except queue.Empty:
-                continue
-            except Exception as e:
-                self.logger.error(f"处理任务时出错: {str(e)}")
-    
-    def _query_formats(self, url, proxy):
-        """查询视频格式的实际处理函数"""
-        try:
-            ydl_opts = {
-                'socket_timeout': 10,
-                'proxy': proxy,
-                'quiet': True
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                self.logger.info("正在获取视频信息...")
-                info_dict = ydl.extract_info(url, download=False)
-                formats = info_dict.get('formats', [info_dict])
-                
-                formats_info = f"\n可用格式 for: {info_dict.get('title')}\n"
-                for f in formats:
-                    format_id = f['format_id']
-                    ext = f['ext']
-                    resolution = f.get('resolution', 'N/A')
-                    acodec = f.get('acodec', 'N/A')
-                    vcodec = f.get('vcodec', 'N/A')
-                    filesize = f.get('filesize', 'N/A')
-                    
-                    # 只显示常见的格式
-                    if (ext in ['mp4', 'webm', 'mkv', 'flv', 'avi'] and resolution != 'audio only') or \
-                       (acodec != 'none' and resolution == 'audio only'):
-                        formats_info += f"ID: {format_id}, 格式: {ext}, 分辨率: {resolution}, 音频: {acodec}, 视频: {vcodec}, 大小: {filesize}\n"
-            
-            self.result_queue.put(("info", formats_info))
-        except Exception as e:
-            self.result_queue.put(("error", f"查询格式失败: {str(e)}"))
-    
-    def _download(self, task_id, url, proxy, save_path, format_id, download_subtitles, thread_count, transcode, transcode_format):
-        """下载视频或音频的实际处理函数"""
-        self.is_downloading = True
-        
-        try:
-            # 检查是否需要提取音频
-            is_audio = format_id.lower().startswith('audio') or format_id == 'bestaudio'
-            
-            # 检查ffmpeg是否可用（如果需要合并格式或提取音频）
-            needs_ffmpeg = (
-                '+' in format_id or  # 格式包含+表示需要合并
-                (format_id.lower().startswith('audio') or format_id == 'bestaudio')  # 音频提取需要ffmpeg
-            )
-            
-            if needs_ffmpeg and not self.ffmpeg_path:
-                raise RuntimeError("需要FFmpeg来合并格式或提取音频，但未找到FFmpeg。")
-            
-            ydl_opts = {
-                'socket_timeout': 10,
-                'proxy': proxy,
-                'format': format_id,
-                'outtmpl': f"{save_path}/%(title)s.%(ext)s",
-                'progress_hooks': [self.download_hook],
-                'quiet': True,
-                'no_warnings': True,
-                'logger': self.logger,
-                'writesubtitles': download_subtitles,
-                'writeautomaticsub': download_subtitles,
-                'subtitleslangs': ['en', 'zh-Hans', 'zh-Hant'],  # 下载多种语言字幕
-                'concurrent_fragments': thread_count  # 多线程下载
-            }
-            
-            # 使用自动获取的ffmpeg路径
-            if self.ffmpeg_path:
-                ydl_opts['ffmpeg_location'] = self.ffmpeg_path
-                self.logger.info(f"使用FFmpeg路径: {self.ffmpeg_path}")
-            
-            if is_audio:
-                ydl_opts['postprocessors'] = [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3' if format_id == 'bestaudio' else 'best',
-                    'preferredquality': '192',
-                }]
-            
-            self.logger.info(f"开始下载到: {save_path}")
-            
-            # 更新进度条
-            self.update_progress(
-                (self.current_task_index-1) / self.total_tasks * 100, 
-                f"下载中 {self.current_task_index}/{self.total_tasks}"
-            )
-            
-            # 保存ydl实例用于终止下载
-            self.ydl_instance = yt_dlp.YoutubeDL(ydl_opts)
-            
-            # 开始下载
-            info_dict = self.ydl_instance.extract_info(url, download=True)
-            
-            if self.abort_all_tasks:  # 确保下载没有被用户终止
-                self.result_queue.put(("info", f"下载已取消: {info_dict.get('title')}"))
-                return
-            
-            self.result_queue.put(("success", f"下载完成: {info_dict.get('title')}"))
-            self.update_progress(
-                self.current_task_index / self.total_tasks * 100, 
-                f"完成 {self.current_task_index}/{self.total_tasks}"
-            )
-            
-            # 保存下载历史
-            self.save_download_history(url, info_dict.get('title'), format_id, save_path)
-            
-            # 如果启用了转码，执行转码
-            if transcode:
-                original_file = f"{save_path}/{info_dict.get('title', 'video')}.{info_dict.get('ext', 'mp4')}"
-                transcoded_file = f"{save_path}/{info_dict.get('title', 'video')}.{transcode_format}"
-                
-                self.result_queue.put(("info", f"开始转码: {original_file} -> {transcoded_file}"))
-                self.transcode_file(original_file, transcoded_file)
-        
-        except Exception as e:
-            if 'yt_dlp.utils.DownloadError' in str(type(e)) or 'Network' in str(e) or '403' in str(e):
-                self.result_queue.put(("error", "连接 YouTube 失败，可能是网络限制或无代理所致。"))
-            else:
-                self.result_queue.put(("error", f"下载失败: {str(e)}"))
-        finally:
-            self.is_downloading = False
-            self.ydl_instance = None
-            if task_id in self.download_threads:
-                del self.download_threads[task_id]
-    
-    def download_hook(self, d):
-        """下载进度回调函数"""
-        if self.abort_all_tasks:
-            return
-            
-        if d['status'] == 'downloading':
-            percent = d.get('_percent_str', '?')
-            speed = d.get('_speed_str', '?')
-            eta = d.get('_eta_str', '?')
-            self.result_queue.put(("progress", f"下载中: {percent} 速度: {speed} 剩余时间: {eta}"))
-            
-            # 更新进度条
-            if '%' in percent:
-                try:
-                    progress = float(percent.strip('%'))
-                    overall_progress = (self.current_task_index-1 + progress/100) / self.total_tasks * 100
-                    self.update_progress(overall_progress, f"下载中 {self.current_task_index}/{self.total_tasks}: {percent}")
-                except:
-                    pass
-        elif d['status'] == 'finished':
-            self.result_queue.put(("info", "正在处理文件..."))
-    
-    def process_results(self):
-        """处理结果队列"""
-        try:
-            while not self.result_queue.empty():
-                result = self.result_queue.get()
-                if result[0] == "info":
-                    self._append_log(result[1], "info")
-                elif result[0] == "error":
-                    self._append_log(f"错误: {result[1]}", "error")
-                elif result[0] == "success":
-                    self._append_log(f"成功: {result[1]}", "success")
-                elif result[0] == "progress":
-                    self._update_progress(result[1])
-        except Exception as e:
-            self._append_log(f"处理结果时出错: {str(e)}", "error")
-        
-        # 每隔100毫秒检查一次结果队列
-        self.root.after(100, self.process_results)
-    
-    def _append_log(self, message, tag="info"):
-        """向日志区域添加消息"""
-        self.log_text.config(state=tk.NORMAL)
-        self.log_text.insert(tk.END, message + "\n", tag)
-        self.log_text.config(state=tk.DISABLED)
-        self.log_text.see(tk.END)
-    
-    def _update_progress(self, message):
-        """更新进度信息"""
-        self.log_text.config(state=tk.NORMAL)
-        # 清除最后一行（进度信息）
-        self.log_text.delete("end-2l", "end-1c")
-        self.log_text.insert(tk.END, message + "\n", "progress")
-        self.log_text.config(state=tk.DISABLED)
-        self.log_text.see(tk.END)
-    
-    def clear_logs(self):
-        """清空日志区域"""
-        self.log_text.config(state=tk.NORMAL)
-        self.log_text.delete(1.0, tk.END)
-        self.log_text.config(state=tk.DISABLED)
-    
-    def load_download_history(self):
-        """加载下载历史"""
-        try:
-            if os.path.exists("download_history.json"):
-                with open("download_history.json", "r", encoding="utf-8") as f:
-                    self.download_history = json.load(f)
-            else:
-                self.download_history = []
-        except Exception as e:
-            self.download_history = []
-            self.logger.error(f"加载下载历史失败: {str(e)}")
-    
-    def save_download_history(self, url, title, format_id, save_path):
-        """保存下载历史"""
-        try:
-            history_entry = {
-                "url": url,
-                "title": title,
-                "format_id": format_id,
-                "save_path": save_path,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            
-            self.download_history.append(history_entry)
-            
-            # 只保留最近100条记录
-            if len(self.download_history) > 100:
-                self.download_history = self.download_history[-100:]
-            
-            with open("download_history.json", "w", encoding="utf-8") as f:
-                json.dump(self.download_history, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            self.logger.error(f"保存下载历史失败: {str(e)}")
-    
-    def show_history(self):
-        """显示下载历史"""
-        if not self.download_history:
-            messagebox.showinfo("下载历史", "暂无下载历史记录")
-            return
-        
+        audio_format = self.audio_format_manual
