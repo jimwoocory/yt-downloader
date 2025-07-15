@@ -676,115 +676,156 @@ class YouTubeDownloaderApp:
             
             self.download_history.append(history_entry)
             
-            # 只保留最近100条记录
-            if len(self.download_history) > 100:
-                self.download_history = self.download_history[-100:]
-            
+            # 保存到文件
             with open(history_file, "w", encoding="utf-8") as f:
                 json.dump(self.download_history, f, ensure_ascii=False, indent=2)
+                
+            self.logger.info(f"下载历史已保存: {title}")
         except Exception as e:
             self.logger.error(f"保存下载历史失败: {str(e)}")
-    
+
     def show_history(self):
         """显示下载历史"""
         if not self.download_history:
-            messagebox.showinfo("下载历史", "暂无下载历史记录")
+            messagebox.showinfo("提示", "暂无下载历史")
             return
-        
+            
+        # 创建历史窗口
         history_window = tk.Toplevel(self.root)
         history_window.title("下载历史")
-        history_window.geometry("800x500")
-        history_window.minsize(700, 400)
+        history_window.geometry("900x600")
+        history_window.resizable(True, True)
         
-        # 创建表格
+        # 创建一个Frame用于放置Treeview和Scrollbar
+        frame = ttk.Frame(history_window)
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # 创建Treeview
         columns = ("序号", "标题", "URL", "格式", "保存路径", "时间")
-        tree = ttk.Treeview(history_window, columns=columns, show="headings")
+        tree = ttk.Treeview(frame, columns=columns, show="headings")
         
         # 设置列宽和标题
+        tree.column("序号", width=50, anchor=tk.CENTER)
+        tree.column("标题", width=200)
+        tree.column("URL", width=250)
+        tree.column("格式", width=80, anchor=tk.CENTER)
+        tree.column("保存路径", width=200)
+        tree.column("时间", width=120, anchor=tk.CENTER)
+        
         for col in columns:
             tree.heading(col, text=col)
-            if col == "标题":
-                tree.column(col, width=200)
-            elif col == "URL":
-                tree.column(col, width=300)
-            elif col == "保存路径":
-                tree.column(col, width=200)
-            else:
-                tree.column(col, width=100)
         
-        # 填充数据
-        for i, entry in enumerate(self.download_history, 1):
-            tree.insert("", "end", values=(
-                i,
-                entry["title"],
-                entry["url"],
-                entry["format_id"],
-                entry["save_path"],
-                entry["timestamp"]
-            ))
-        
-        # 添加滚动条
-        scrollbar = ttk.Scrollbar(history_window, orient="vertical", command=tree.yview)
+        # 创建垂直滚动条
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscroll=scrollbar.set)
+        
+        # 使用pack布局滚动条和表格
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        tree.pack(fill=tk.BOTH, expand=True)
+        tree.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        
+        # 填充表格数据
+        for i, entry in enumerate(self.download_history, 1):
+            tree.insert("", tk.END, values=(
+                i,
+                entry.get("title", "未知标题"),
+                entry.get("url", "未知URL"),
+                entry.get("format_id", "未知格式"),
+                entry.get("save_path", "未知路径"),
+                entry.get("timestamp", "未知时间")
+            ))
         
         # 双击打开保存路径
         tree.bind("<Double-1>", lambda event: self.open_save_path(tree))
-    
-    def open_save_path(self, tree):
-        """打开保存路径"""
-        selected_item = tree.selection()
-        if not selected_item:
-            return
-            
-        item = tree.item(selected_item[0])
-        path = item["values"][4]  # 保存路径在第5列
         
-        if os.path.exists(path):
-            try:
-                if platform.system() == "Windows":
-                    os.startfile(path)
-                elif platform.system() == "Darwin":  # macOS
-                    subprocess.run(["open", path])
-                else:  # Linux
-                    subprocess.run(["xdg-open", path])
-            except Exception as e:
-                self.logger.error(f"打开路径失败: {str(e)}")
-                messagebox.showerror("错误", f"无法打开路径: {str(e)}")
-        else:
-            messagebox.showinfo("提示", "文件或文件夹不存在")
+        # 添加按钮框架
+        button_frame = ttk.Frame(history_window)
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=5)
+        
+        ttk.Button(button_frame, text="打开保存路径", command=lambda: self.open_save_path(tree)).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="复制URL", command=lambda: self.copy_url(tree)).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="删除选中", command=lambda: self.delete_selected_history(tree)).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="关闭", command=history_window.destroy).pack(side=tk.RIGHT, padx=5)
 
-# 日志处理类
+    def open_save_path(self, tree):
+        """打开选中条目的保存路径"""
+        selection = tree.selection()
+        if not selection:
+            messagebox.showinfo("提示", "请先选择一个下载记录")
+            return
+        
+        item = tree.item(selection[0])
+        values = item.get("values", [])
+        if len(values) > 4:
+            path = values[4]  # 保存路径在第5列
+            if os.path.exists(path):
+                try:
+                    if platform.system() == "Windows":
+                        os.startfile(path)
+                    elif platform.system() == "Darwin":  # macOS
+                        subprocess.Popen(["open", path])
+                    else:  # Linux
+                        subprocess.Popen(["xdg-open", path])
+                except Exception as e:
+                    self.logger.error(f"打开文件路径失败: {str(e)}")
+                    messagebox.showerror("错误", f"无法打开路径: {str(e)}")
+            else:
+                messagebox.showinfo("提示", "文件路径不存在或已被移动")
+
+    def copy_url(self, tree):
+        """复制选中条目的URL到剪贴板"""
+        selection = tree.selection()
+        if not selection:
+            messagebox.showinfo("提示", "请先选择一个下载记录")
+            return
+        
+        item = tree.item(selection[0])
+        values = item.get("values", [])
+        if len(values) > 2:
+            url = values[2]  # URL在第3列
+            self.root.clipboard_clear()
+            self.root.clipboard_append(url)
+            self.logger.info("URL已复制到剪贴板")
+            messagebox.showinfo("成功", "URL已复制到剪贴板")
+
+    def delete_selected_history(self, tree):
+        """删除选中的历史记录"""
+        selection = tree.selection()
+        if not selection:
+            messagebox.showinfo("提示", "请先选择一个下载记录")
+            return
+        
+        if messagebox.askyesno("确认", "确定要删除选中的下载记录吗？"):
+            for item_id in selection:
+                item = tree.item(item_id)
+                values = item.get("values", [])
+                if len(values) > 1:
+                    title = values[1]
+                    # 从列表中删除
+                    for i, entry in enumerate(self.download_history):
+                        if entry.get("title") == title and entry.get("url") == values[2]:
+                            del self.download_history[i]
+                            break
+                    # 从树视图中删除
+                    tree.delete(item_id)
+            
+            # 保存更新后的历史记录
+            self.save_download_history("", "", "", "")  # 使用空参数触发保存
+            self.logger.info("已删除选中的下载记录")
+
 class QueueHandler(logging.Handler):
+    """日志处理器，将日志消息放入队列"""
     def __init__(self, log_queue):
         super().__init__()
         self.log_queue = log_queue
 
     def emit(self, record):
-        level = record.levelname
-        msg = self.format(record)
-        self.log_queue.put((level, msg))
+        self.log_queue.put((record.levelname, self.format(record)))
 
 def main():
     root = tk.Tk()
+    # 确保中文字体正确显示
+    root.option_add("*Font", "Microsoft YaHei UI")
     app = YouTubeDownloaderApp(root)
-    
-    # 检查QueueHandler是否已定义
-    if 'QueueHandler' not in globals():
-        class QueueHandler(logging.Handler):
-            def __init__(self, log_queue):
-                super().__init__()
-                self.log_queue = log_queue
-
-            def emit(self, record):
-                level = record.levelname
-                msg = self.format(record)
-                self.log_queue.put((level, msg))
-    
-    # 添加特殊日志级别用于格式信息
-    logging.addLevelName(logging.INFO + 1, "FORMAT")
-    
     root.mainloop()
 
 if __name__ == "__main__":
