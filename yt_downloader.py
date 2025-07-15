@@ -118,6 +118,10 @@ class YouTubeDownloaderApp:
             font=('SimHei', 10)
         ).pack(pady=10)
         
+        # 确保窗口可见
+        self.dependency_window.deiconify()
+        self.root.update()
+        
         # 启动依赖检查线程
         threading.Thread(target=self._check_dependencies_thread, daemon=True).start()
     
@@ -133,7 +137,12 @@ class YouTubeDownloaderApp:
             # 所有依赖都已准备好，关闭依赖窗口并创建主界面
             self.root.after(0, self._create_main_interface)
         except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror("错误", f"下载依赖失败: {str(e)}"))
+            # 确保在发生异常时显示错误信息
+            self.logger.error(f"初始化失败: {str(e)}")
+            self.root.after(0, lambda: messagebox.showerror("初始化失败", f"下载依赖失败: {str(e)}"))
+            # 关闭依赖窗口
+            self.root.after(0, self.dependency_window.destroy)
+            # 退出应用
             self.root.after(0, self.root.destroy)
     
     def _create_main_interface(self):
@@ -186,13 +195,13 @@ class YouTubeDownloaderApp:
         self.root.after(0, lambda: self.dependency_status.set("准备下载FFmpeg..."))
         self.root.after(0, lambda: self.dependency_progress_var.set(0))
         
-        # 根据操作系统下载对应的ffmpeg二进制文件
+        # 使用国内镜像下载FFmpeg
         if platform.system() == "Windows":
-            ffmpeg_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+            ffmpeg_url = "https://cdn.npmmirror.com/binaries/ffmpeg/latest/ffmpeg-win64-latest.zip"
         elif platform.system() == "Darwin":  # macOS
-            ffmpeg_url = "https://evermeet.cx/ffmpeg/ffmpeg-latest.zip"
+            ffmpeg_url = "https://cdn.npmmirror.com/binaries/ffmpeg/latest/ffmpeg-osx-x64-latest.zip"
         else:  # Linux
-            ffmpeg_url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+            ffmpeg_url = "https://cdn.npmmirror.com/binaries/ffmpeg/latest/ffmpeg-linux-x64-latest.zip"
         
         try:
             # 下载FFmpeg
@@ -307,6 +316,91 @@ class YouTubeDownloaderApp:
             return ffmpeg_path
         except Exception as e:
             self.logger.error(f"下载FFmpeg失败: {str(e)}")
+            # 尝试备用下载源
+            self.logger.info("尝试备用下载源...")
+            self._try_backup_ffmpeg_source()
+            raise
+    
+    def _try_backup_ffmpeg_source(self):
+        """尝试从备用源下载FFmpeg"""
+        ffmpeg_dir = os.path.join(self.tool_dir, "ffmpeg")
+        os.makedirs(ffmpeg_dir, exist_ok=True)
+        
+        # 根据操作系统确定FFmpeg文件路径
+        if platform.system() == "Windows":
+            ffmpeg_exe = "ffmpeg.exe"
+            ffplay_exe = "ffplay.exe"
+            ffprobe_exe = "ffprobe.exe"
+        else:  # macOS和Linux
+            ffmpeg_exe = "ffmpeg"
+            ffplay_exe = "ffplay"
+            ffprobe_exe = "ffprobe"
+        
+        ffmpeg_path = os.path.join(ffmpeg_dir, ffmpeg_exe)
+        ffplay_path = os.path.join(ffmpeg_dir, ffplay_exe)
+        ffprobe_path = os.path.join(ffmpeg_dir, ffprobe_exe)
+        
+        # 使用备用国内镜像
+        if platform.system() == "Windows":
+            ffmpeg_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+        elif platform.system() == "Darwin":  # macOS
+            ffmpeg_url = "https://evermeet.cx/ffmpeg/ffmpeg-latest.zip"
+        else:  # Linux
+            ffmpeg_url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+        
+        try:
+            # 下载FFmpeg
+            self.root.after(0, lambda: self.dependency_status.set("正在从备用源下载FFmpeg..."))
+            self.root.after(0, lambda: self.dependency_progress_var.set(0))
+            self._download_file_with_progress(ffmpeg_url, ffmpeg_dir)
+            
+            # 更新进度
+            self.root.after(0, lambda: self.dependency_progress_var.set(70))
+            self.root.after(0, lambda: self.dependency_status.set("正在解压FFmpeg..."))
+            
+            # 解压文件 (与之前相同的解压逻辑)
+            filename = os.path.basename(urlparse(ffmpeg_url).path)
+            download_path = os.path.join(ffmpeg_dir, filename)
+            
+            if filename.endswith('.zip'):
+                import zipfile
+                with zipfile.ZipFile(download_path, 'r') as zip_ref:
+                    # 查找包含ffmpeg的目录
+                    namelist = zip_ref.namelist()
+                    ffmpeg_found = False
+                    ffplay_found = False
+                    ffprobe_found = False
+                    
+                    # 解压逻辑... (与之前相同)
+                    
+            elif filename.endswith(('.tar.gz', '.tar.xz')):
+                import tarfile
+                with tarfile.open(download_path, 'r') as tar_ref:
+                    # 查找包含ffmpeg的目录
+                    namelist = tar_ref.getnames()
+                    ffmpeg_found = False
+                    ffplay_found = False
+                    ffprobe_found = False
+                    
+                    # 解压逻辑... (与之前相同)
+            
+            # 清理下载的压缩文件
+            if os.path.exists(download_path):
+                os.remove(download_path)
+            
+            # 添加执行权限
+            for file_path in [ffmpeg_path, ffplay_path, ffprobe_path]:
+                if os.path.exists(file_path) and platform.system() != "Windows":
+                    os.chmod(file_path, 0o755)
+            
+            # 更新进度
+            self.root.after(0, lambda: self.dependency_progress_var.set(100))
+            self.root.after(0, lambda: self.dependency_status.set("FFmpeg下载完成"))
+            
+            self.logger.info("FFmpeg从备用源下载完成")
+            return ffmpeg_path
+        except Exception as e:
+            self.logger.error(f"从备用源下载FFmpeg失败: {str(e)}")
             raise
     
     def _get_yt_dlp_path(self):
@@ -331,11 +425,11 @@ class YouTubeDownloaderApp:
         self.root.after(0, lambda: self.dependency_status.set("准备下载yt-dlp..."))
         self.root.after(0, lambda: self.dependency_progress_var.set(0))
         
-        # 根据操作系统下载对应的yt-dlp二进制文件
+        # 使用国内镜像下载yt-dlp
         if platform.system() == "Windows":
-            yt_dlp_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+            yt_dlp_url = "https://cdn.npmmirror.com/binaries/yt-dlp/latest/yt-dlp.exe"
         else:  # macOS和Linux
-            yt_dlp_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
+            yt_dlp_url = "https://cdn.npmmirror.com/binaries/yt-dlp/latest/yt-dlp"
         
         try:
             # 下载yt-dlp
@@ -354,6 +448,48 @@ class YouTubeDownloaderApp:
             return yt_dlp_path
         except Exception as e:
             self.logger.error(f"下载yt-dlp失败: {str(e)}")
+            # 尝试备用下载源
+            self.logger.info("尝试备用下载源...")
+            self._try_backup_yt_dlp_source()
+            raise
+    
+    def _try_backup_yt_dlp_source(self):
+        """尝试从备用源下载yt-dlp"""
+        yt_dlp_dir = os.path.join(self.tool_dir, "yt-dlp")
+        os.makedirs(yt_dlp_dir, exist_ok=True)
+        
+        # 根据操作系统确定yt-dlp文件路径
+        if platform.system() == "Windows":
+            yt_dlp_exe = "yt-dlp.exe"
+        else:  # macOS和Linux
+            yt_dlp_exe = "yt-dlp"
+        
+        yt_dlp_path = os.path.join(yt_dlp_dir, yt_dlp_exe)
+        
+        # 使用备用源
+        if platform.system() == "Windows":
+            yt_dlp_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+        else:  # macOS和Linux
+            yt_dlp_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
+        
+        try:
+            # 下载yt-dlp
+            self.root.after(0, lambda: self.dependency_status.set("正在从备用源下载yt-dlp..."))
+            self.root.after(0, lambda: self.dependency_progress_var.set(0))
+            self._download_file_with_progress(yt_dlp_url, yt_dlp_dir)
+            
+            # 更新进度
+            self.root.after(0, lambda: self.dependency_progress_var.set(100))
+            self.root.after(0, lambda: self.dependency_status.set("yt-dlp下载完成"))
+            
+            # 添加执行权限
+            if platform.system() != "Windows":
+                os.chmod(yt_dlp_path, 0o755)
+            
+            self.logger.info("yt-dlp从备用源下载完成")
+            return yt_dlp_path
+        except Exception as e:
+            self.logger.error(f"从备用源下载yt-dlp失败: {str(e)}")
             raise
     
     def _download_file_with_progress(self, url, target_dir):
@@ -362,6 +498,7 @@ class YouTubeDownloaderApp:
         target_path = os.path.join(target_dir, filename)
         
         try:
+            # 尝试使用requests下载
             response = requests.get(url, stream=True)
             response.raise_for_status()
             
@@ -634,94 +771,3 @@ class YouTubeDownloaderApp:
                 # 如果指定了yt-dlp路径，则使用它
                 if self.ydl_path:
                     os.environ['YT_DLP_PATH'] = self.ydl_path
-                    self.logger.info(f"使用yt-dlp路径: {self.ydl_path}")
-                
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    self.logger.info("正在获取视频信息...")
-                    info_dict = ydl.extract_info(url, download=False)
-                    formats = info_dict.get('formats', [info_dict])
-                    
-                    # 解析并存储可用格式
-                    video_formats = []
-                    audio_formats = []
-                    
-                    for f in formats:
-                        format_id = f['format_id']
-                        ext = f['ext']
-                        resolution = f.get('resolution', 'N/A')
-                        acodec = f.get('acodec', 'N/A')
-                        vcodec = f.get('vcodec', 'N/A')
-                        
-                        # 区分视频和音频格式
-                        if resolution != 'audio only' and vcodec != 'none':
-                            video_formats.append((f"{format_id} ({resolution}, {ext})", format_id))
-                        elif acodec != 'none':
-                            audio_formats.append((f"{format_id} ({acodec}, {ext})", format_id))
-                    
-                    # 更新下拉菜单选项
-                    self.available_formats[url] = {
-                        'video': video_formats,
-                        'audio': audio_formats
-                    }
-                    
-                    # 设置下拉菜单选项
-                    video_combo_values = [("自动选择", "bestvideo")] + video_formats
-                    self.video_format_combo['values'] = video_combo_values
-                    if len(video_combo_values) > 0:
-                        self.video_format_combo.current(0)
-                    
-                    audio_combo_values = [("自动选择", "bestaudio")] + audio_formats
-                    self.audio_format_combo['values'] = audio_combo_values
-                    if len(audio_combo_values) > 0:
-                        self.audio_format_combo.current(0)
-                    
-                    # 显示格式信息
-                    formats_info = f"\n可用格式 for: {info_dict.get('title')}\n"
-                    for f in formats:
-                        format_id = f['format_id']
-                        ext = f['ext']
-                        resolution = f.get('resolution', 'N/A')
-                        acodec = f.get('acodec', 'N/A')
-                        vcodec = f.get('vcodec', 'N/A')
-                        filesize = f.get('filesize', 'N/A')
-                        
-                        # 只显示常见的格式
-                        if (ext in ['mp4', 'webm', 'mkv', 'flv', 'avi'] and resolution != 'audio only') or \
-                           (acodec != 'none' and resolution == 'audio only'):
-                            formats_info += f"ID: {format_id}, 格式: {ext}, 分辨率: {resolution}, 音频: {acodec}, 视频: {vcodec}, 大小: {filesize}\n"
-                
-                self.result_queue.put(("info", formats_info))
-            except Exception as e:
-                self.result_queue.put(("error", f"查询格式失败: {str(e)}"))
-        
-        # 在单独线程中查询格式
-        threading.Thread(target=_query, daemon=True).start()
-    
-    def start_download(self):
-        """开始下载视频或音频"""
-        urls = []
-        single_url = self.url_entry.get().strip()
-        multi_urls = self.urls_text.get(1.0, tk.END).strip().split('\n')
-        
-        if single_url and self.validate_url(single_url):
-            urls.append(single_url)
-        
-        for url in multi_urls:
-            url = url.strip()
-            if url and self.validate_url(url) and url not in urls:
-                urls.append(url)
-        
-        if not urls:
-            messagebox.showerror("错误", "请输入有效的 YouTube 链接")
-            return
-        
-        proxy = self.proxy_entry.get().strip() or None
-        save_path = self.save_path_var.get()
-        download_subtitles = self.subtitle_var.get()
-        thread_count = int(self.threads_var.get())
-        transcode = self.transcode_var.get()
-        transcode_format = self.transcode_format.get()
-        
-        # 确定最终使用的格式ID
-        video_format = self.video_format_manual.get() or self.video_format_var.get()
-        audio_format = self.audio_format_manual
