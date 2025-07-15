@@ -17,7 +17,7 @@ class YouTubeDownloaderApp:
     def __init__(self, root):
         self.root = root
         self.root.title("YouTube 下载器")
-        self.root.geometry("1000x800")  # 增加窗口高度以容纳新组件
+        self.root.geometry("1000x800")
         self.root.minsize(900, 750)
 
         # 设置中文字体支持
@@ -32,7 +32,7 @@ class YouTubeDownloaderApp:
         # 日志队列和结果队列
         self.log_queue = queue.Queue()
         self.result_queue = queue.Queue()
-        self.download_queue = queue.Queue()  # 添加下载队列
+        self.download_queue = queue.Queue()
 
         # 下载任务列表和控制变量
         self.download_tasks = []
@@ -64,7 +64,7 @@ class YouTubeDownloaderApp:
         # 用于终止下载的变量
         self.ydl_instance = None
         self.is_downloading = False
-        self.download_threads = {}  # 跟踪所有下载线程
+        self.download_threads = {}
 
     def setup_logging(self):
         """配置日志系统，将日志输出到GUI"""
@@ -83,7 +83,7 @@ class YouTubeDownloaderApp:
 
         # 创建GUI处理器
         gui_handler = QueueHandler(self.log_queue)
-        gui_handler.setLevel(logging.INFO) # GUI只显示INFO及以上级别的日志
+        gui_handler.setLevel(logging.INFO)
         gui_handler.setFormatter(formatter)
         self.logger.addHandler(gui_handler)
 
@@ -244,7 +244,8 @@ class YouTubeDownloaderApp:
                     'socket_timeout': 10,
                     'proxy': proxy,
                     'quiet': True,
-                    'format': 'bestvideo*+bestaudio/best'
+                    'format': 'bestvideo*+bestaudio/best',
+                    'noplaylist': True,  # 只获取单个视频，不处理播放列表
                 }
                 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -278,6 +279,9 @@ class YouTubeDownloaderApp:
                     video_formats = []
                     audio_formats = []
 
+                    # 收集所有格式信息用于调试
+                    format_debug_info = []
+                    
                     for f in formats:
                         format_id = f.get('format_id')
                         ext = f.get('ext')
@@ -286,6 +290,15 @@ class YouTubeDownloaderApp:
                         vcodec = f.get('vcodec')
                         filesize = f.get('filesize')
                         filesize_str = f.get('filesize_approx_str') or (f'{filesize / (1024*1024):.2f}MB' if filesize else '未知大小')
+                        
+                        # 记录格式信息用于调试
+                        format_debug_info.append({
+                            'format_id': format_id,
+                            'ext': ext,
+                            'resolution': resolution,
+                            'acodec': acodec,
+                            'vcodec': vcodec
+                        })
 
                         if vcodec != 'none' and resolution != 'audio only': # 视频格式
                             # 过滤掉不常见的视频格式，并限制分辨率范围
@@ -303,6 +316,9 @@ class YouTubeDownloaderApp:
                                 'format_id': format_id,
                                 'ext': ext
                             })
+                    
+                    # 记录格式信息到日志
+                    self.logger.debug(f"可用格式信息: {format_debug_info}")
                     
                     # 按照分辨率从高到低排序视频格式
                     video_formats.sort(key=lambda x: int(x['display'].split('p')[0]) if 'p' in x['display'] else 0, reverse=True)
@@ -332,6 +348,7 @@ class YouTubeDownloaderApp:
             self.video_format_combobox.config(state="readonly")
         else:
             self.video_format_combobox.config(state="disabled")
+            self.logger.warning("未找到可用的视频格式")
 
         # 更新音频格式下拉框
         audio_display_options = [f['display'] for f in self.available_audio_formats]
@@ -341,6 +358,7 @@ class YouTubeDownloaderApp:
             self.audio_format_combobox.config(state="readonly")
         else:
             self.audio_format_combobox.config(state="disabled")
+            self.logger.warning("未找到可用的音频格式")
 
     def start_download(self):
         """开始下载"""
@@ -600,12 +618,12 @@ class YouTubeDownloaderApp:
             elif col == "URL":
                 tree.column(col, width=300)
             elif col == "保存路径":
-                tree.column(col, width=150)
+                tree.column(col, width=200)
             else:
-                tree.column(col, width=80)
+                tree.column(col, width=100)
         
-        # 添加数据
-        for i, entry in enumerate(reversed(self.download_history), 1):
+        # 填充数据
+        for i, entry in enumerate(self.download_history, 1):
             tree.insert("", "end", values=(
                 i,
                 entry["title"],
@@ -618,37 +636,62 @@ class YouTubeDownloaderApp:
         # 添加滚动条
         scrollbar = ttk.Scrollbar(history_window, orient="vertical", command=tree.yview)
         tree.configure(yscroll=scrollbar.set)
-        
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         tree.pack(fill=tk.BOTH, expand=True)
         
-        # 添加双击打开文件位置功能
-        def open_file_location(event):
-            item = tree.selection()[0]
-            values = tree.item(item, "values")
-            path = values[4]
+        # 双击打开保存路径
+        tree.bind("<Double-1>", lambda event: self.open_save_path(tree))
+    
+    def open_save_path(self, tree):
+        """打开保存路径"""
+        selected_item = tree.selection()
+        if not selected_item:
+            return
             
-            if platform.system() == "Windows":
-                os.startfile(path)
-            elif platform.system() == "Darwin":  # macOS
-                subprocess.run(["open", path])
-            else:  # Linux
-                subprocess.run(["xdg-open", path])
+        item = tree.item(selected_item[0])
+        path = item["values"][4]  # 保存路径在第5列
         
-        tree.bind("<Double-1>", open_file_location)
+        if os.path.exists(path):
+            try:
+                if platform.system() == "Windows":
+                    os.startfile(path)
+                elif platform.system() == "Darwin":  # macOS
+                    subprocess.run(["open", path])
+                else:  # Linux
+                    subprocess.run(["xdg-open", path])
+            except Exception as e:
+                self.logger.error(f"打开路径失败: {str(e)}")
+                messagebox.showerror("错误", f"无法打开路径: {str(e)}")
+        else:
+            messagebox.showinfo("提示", "文件或文件夹不存在")
 
+# 日志处理类
 class QueueHandler(logging.Handler):
-    """日志处理器，将日志消息放入队列"""
     def __init__(self, log_queue):
         super().__init__()
         self.log_queue = log_queue
-    
+
     def emit(self, record):
-        self.log_queue.put((record.levelname, self.format(record)))
+        level = record.levelname
+        msg = self.format(record)
+        self.log_queue.put((level, msg))
 
 def main():
     root = tk.Tk()
     app = YouTubeDownloaderApp(root)
+    
+    # 检查QueueHandler是否已定义
+    if 'QueueHandler' not in globals():
+        class QueueHandler(logging.Handler):
+            def __init__(self, log_queue):
+                super().__init__()
+                self.log_queue = log_queue
+
+            def emit(self, record):
+                level = record.levelname
+                msg = self.format(record)
+                self.log_queue.put((level, msg))
+    
     root.mainloop()
 
 if __name__ == "__main__":
