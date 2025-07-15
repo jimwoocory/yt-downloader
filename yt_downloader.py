@@ -19,16 +19,27 @@ class YouTubeDownloaderApp:
         self.root.title("YouTube 下载器")
         self.root.geometry("1000x800")
         self.root.minsize(900, 750)
-
-        # 设置中文字体支持
+        
+        # 设置主题颜色
+        self.bg_color = "#f0f0f0"
+        self.frame_color = "#ffffff"
+        self.button_color = "#4CAF50"
+        self.button_text_color = "#ffffff"
+        self.highlight_color = "#2196F3"
+        
+        # 设置中文字体支持 - 增加字体大小
         self.style = ttk.Style()
-        self.style.configure("TLabel", font=("Microsoft YaHei UI", 12))
-        self.style.configure("TButton", font=("Microsoft YaHei UI", 12))
-        self.style.configure("TEntry", font=("Microsoft YaHei UI", 12))
-        self.style.configure("TCombobox", font=("Microsoft YaHei UI", 12))
-        self.style.configure("TScrolledtext", font=("Microsoft YaHei UI", 10))
+        self.style.configure("TLabel", font=("Microsoft YaHei UI", 13))
+        self.style.configure("TButton", font=("Microsoft YaHei UI", 13), background=self.button_color, foreground=self.button_text_color)
+        self.style.configure("TEntry", font=("Microsoft YaHei UI", 13))
+        self.style.configure("TCombobox", font=("Microsoft YaHei UI", 13))
+        self.style.configure("TScrolledtext", font=("Microsoft YaHei UI", 12))  # 增加日志字体大小
         self.style.configure("TLabelframe.Label", font=("Microsoft YaHei UI", 14, "bold"))
-
+        self.style.configure("TProgressbar", thickness=25)
+        
+        # 设置按钮悬停效果
+        self.root.option_add("*TButton*HoverBackground", "#45a049")
+        
         # 日志队列和结果队列
         self.log_queue = queue.Queue()
         self.result_queue = queue.Queue()
@@ -107,108 +118,141 @@ class YouTubeDownloaderApp:
 
     def create_widgets(self):
         """创建GUI界面组件"""
-        main_frame = ttk.Frame(self.root, padding="10 10 10 10")
+        # 设置主窗口背景
+        self.root.configure(bg=self.bg_color)
+        
+        main_frame = ttk.Frame(self.root, padding="10 10 10 10", style="TFrame")
         main_frame.pack(fill=tk.BOTH, expand=True)
-
+        
         # URL输入和代理设置
         url_frame = ttk.LabelFrame(main_frame, text="视频URL和代理设置", padding="10 10 10 10")
-        url_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(url_frame, text="视频URL:").grid(row=0, column=0, sticky=tk.W, pady=5, padx=5)
-        self.url_entry = ttk.Entry(url_frame, width=70)
+        url_frame.pack(fill=tk.X, pady=5, ipady=5)
+        
+        url_input_frame = ttk.Frame(url_frame)
+        url_input_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(url_input_frame, text="视频URL:").grid(row=0, column=0, sticky=tk.W, pady=5, padx=5)
+        self.url_entry = ttk.Entry(url_input_frame, width=70)
         self.url_entry.grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
         self.url_entry.insert(0, "https://www.youtube.com/watch?v=")
-
-        ttk.Button(url_frame, text="获取信息", command=self.fetch_video_info).grid(row=0, column=2, padx=5)
+        
+        ttk.Button(url_input_frame, text="获取信息", command=self.fetch_video_info).grid(row=0, column=2, padx=5)
         
         # 批量下载支持
         ttk.Label(url_frame, text="或批量输入URLs (每行一个):").grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.urls_text = scrolledtext.ScrolledText(url_frame, wrap=tk.WORD, height=3)
-        self.urls_text.grid(row=1, column=1, columnspan=2, sticky="ew", padx=5, pady=5)
-
-        ttk.Label(url_frame, text="代理 (例如: http://127.0.0.1:7897):").grid(row=2, column=0, sticky=tk.W, pady=5)
-        self.proxy_entry = ttk.Entry(url_frame, width=50)
-        self.proxy_entry.grid(row=2, column=1, sticky=tk.W, pady=5, padx=5)
+        self.urls_text = scrolledtext.ScrolledText(url_frame, wrap=tk.WORD, height=3, font=("Microsoft YaHei UI", 12))
+        self.urls_text.grid(row=1, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
+        
+        proxy_frame = ttk.Frame(url_frame)
+        proxy_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(proxy_frame, text="代理 (例如: http://127.0.0.1:7897):").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.proxy_entry = ttk.Entry(proxy_frame, width=50)
+        self.proxy_entry.grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
         self.proxy_entry.insert(0, "http://127.0.0.1:7897")
-
+        
         # 视频信息预览
         info_frame = ttk.LabelFrame(main_frame, text="视频信息预览", padding="10 10 10 10")
-        info_frame.pack(fill=tk.X, pady=5)
+        info_frame.pack(fill=tk.X, pady=5, ipady=5)
         
         self.title_var = tk.StringVar(value="标题: ")
         self.duration_var = tk.StringVar(value="时长: ")
         self.views_var = tk.StringVar(value="观看次数: ")
         self.uploader_var = tk.StringVar(value="上传者: ")
         
-        ttk.Label(info_frame, textvariable=self.title_var).grid(row=0, column=0, sticky=tk.W, pady=2)
-        ttk.Label(info_frame, textvariable=self.duration_var).grid(row=0, column=1, sticky=tk.W, pady=2, padx=20)
-        ttk.Label(info_frame, textvariable=self.views_var).grid(row=0, column=2, sticky=tk.W, pady=2, padx=20)
-        ttk.Label(info_frame, textvariable=self.uploader_var).grid(row=0, column=3, sticky=tk.W, pady=2, padx=20)
+        # 美化信息显示
+        info_display_frame = ttk.Frame(info_frame)
+        info_display_frame.pack(fill=tk.X, expand=True)
+        
+        ttk.Label(info_display_frame, textvariable=self.title_var, font=("Microsoft YaHei UI", 13, "bold")).grid(row=0, column=0, sticky=tk.W, pady=2, padx=5)
+        ttk.Label(info_display_frame, textvariable=self.duration_var).grid(row=0, column=1, sticky=tk.W, pady=2, padx=20)
+        ttk.Label(info_display_frame, textvariable=self.views_var).grid(row=0, column=2, sticky=tk.W, pady=2, padx=20)
+        ttk.Label(info_display_frame, textvariable=self.uploader_var).grid(row=0, column=3, sticky=tk.W, pady=2, padx=20)
         
         # 下载选项
         options_frame = ttk.LabelFrame(main_frame, text="下载选项", padding="10 10 10 10")
-        options_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(options_frame, text="保存路径:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        # 修改默认保存路径为 D:\Users\Jimwoo\Downloads
+        options_frame.pack(fill=tk.X, pady=5, ipady=5)
+        
+        # 保存路径设置
+        save_path_frame = ttk.Frame(options_frame)
+        save_path_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(save_path_frame, text="保存路径:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.save_path_var = tk.StringVar(value=r"D:\Users\Jimwoo\Downloads")
-        ttk.Entry(options_frame, textvariable=self.save_path_var, width=50).grid(row=0, column=1, sticky=tk.W, padx=(0, 5))
-        ttk.Button(options_frame, text="浏览...", command=self.browse_save_path).grid(row=0, column=2, sticky=tk.W)
-
+        ttk.Entry(save_path_frame, textvariable=self.save_path_var, width=50).grid(row=0, column=1, sticky=tk.W, padx=(0, 5))
+        ttk.Button(save_path_frame, text="浏览...", command=self.browse_save_path).grid(row=0, column=2, sticky=tk.W)
+        
         # 下载格式选择
-        ttk.Label(options_frame, text="视频格式:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        format_frame = ttk.Frame(options_frame)
+        format_frame.pack(fill=tk.X, pady=5)
+        
+        # 视频格式选择
+        video_format_frame = ttk.Frame(format_frame)
+        video_format_frame.pack(fill=tk.X, pady=2)
+        
+        ttk.Label(video_format_frame, text="视频格式:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.video_format_var = tk.StringVar()
-        self.video_format_combobox = ttk.Combobox(options_frame, textvariable=self.video_format_var, width=40, state="disabled")
-        self.video_format_combobox.grid(row=1, column=1, sticky=tk.W, padx=5)
-
-        ttk.Label(options_frame, text="音频格式:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.video_format_combobox = ttk.Combobox(video_format_frame, textvariable=self.video_format_var, width=40, state="disabled")
+        self.video_format_combobox.grid(row=0, column=1, sticky=tk.W, padx=5)
+        
+        # 音频格式选择
+        audio_format_frame = ttk.Frame(format_frame)
+        audio_format_frame.pack(fill=tk.X, pady=2)
+        
+        ttk.Label(audio_format_frame, text="音频格式:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.audio_format_var = tk.StringVar()
-        self.audio_format_combobox = ttk.Combobox(options_frame, textvariable=self.audio_format_var, width=40, state="disabled")
-        self.audio_format_combobox.grid(row=2, column=1, sticky=tk.W, padx=5)
-
+        self.audio_format_combobox = ttk.Combobox(audio_format_frame, textvariable=self.audio_format_var, width=40, state="disabled")
+        self.audio_format_combobox.grid(row=0, column=1, sticky=tk.W, padx=5)
+        
         # 自定义格式ID输入
-        ttk.Label(options_frame, text="自定义格式ID:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        custom_format_frame = ttk.Frame(options_frame)
+        custom_format_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(custom_format_frame, text="自定义格式ID:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.custom_format_var = tk.StringVar()
-        ttk.Entry(options_frame, textvariable=self.custom_format_var, width=15).grid(row=3, column=1, sticky=tk.W, padx=5)
-        ttk.Label(options_frame, text="(留空则使用推荐格式)").grid(row=3, column=2, sticky=tk.W, pady=5)
-
+        ttk.Entry(custom_format_frame, textvariable=self.custom_format_var, width=15).grid(row=0, column=1, sticky=tk.W, padx=5)
+        ttk.Label(custom_format_frame, text="(留空则使用推荐格式)").grid(row=0, column=2, sticky=tk.W, pady=5)
+        
         # 字幕选项
+        subtitle_frame = ttk.Frame(options_frame)
+        subtitle_frame.pack(fill=tk.X, pady=5)
+        
         self.subtitle_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(options_frame, text="下载字幕", variable=self.subtitle_var).grid(row=4, column=0, sticky=tk.W, pady=5)
+        ttk.Checkbutton(subtitle_frame, text="下载字幕", variable=self.subtitle_var).grid(row=0, column=0, sticky=tk.W, pady=5)
         
         # 按钮
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(pady=10)
-
+        
         ttk.Button(button_frame, text="开始下载", command=self.start_download, width=15).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="终止下载", command=self.stop_download, width=15).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="清空日志", command=self.clear_logs, width=15).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="查看历史", command=self.show_history, width=15).pack(side=tk.LEFT, padx=5)
-
+        
         # 下载进度条
         progress_frame = ttk.LabelFrame(main_frame, text="下载进度", padding="10 10 10 10")
-        progress_frame.pack(fill=tk.X, pady=5)
-
+        progress_frame.pack(fill=tk.X, pady=5, ipady=5)
+        
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var, maximum=100)
         self.progress_bar.pack(fill=tk.X, expand=True, pady=5)
-
+        
         self.progress_text = tk.StringVar(value="等待下载...")
-        ttk.Label(progress_frame, textvariable=self.progress_text).pack(fill=tk.X, pady=2)
-
+        ttk.Label(progress_frame, textvariable=self.progress_text, font=("Microsoft YaHei UI", 13)).pack(fill=tk.X, pady=2)
+        
         # 日志输出区域
         log_frame = ttk.LabelFrame(main_frame, text="日志输出", padding="10 10 10 10")
-        log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-
-        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, height=15)
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=5, ipady=5)
+        
+        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, height=15, font=("Microsoft YaHei UI", 12))  # 增加日志字体大小
         self.log_text.pack(fill=tk.BOTH, expand=True)
         self.log_text.config(state=tk.DISABLED)
-
+        
         # 配置日志标签颜色
         self.log_text.tag_config("INFO", foreground="blue")
         self.log_text.tag_config("WARNING", foreground="orange")
         self.log_text.tag_config("ERROR", foreground="red")
-        self.log_text.tag_config("CRITICAL", foreground="darkred", font=("Microsoft YaHei UI", 10, "bold"))
+        self.log_text.tag_config("CRITICAL", foreground="darkred", font=("Microsoft YaHei UI", 12, "bold"))
         self.log_text.tag_config("FORMAT", foreground="green")  # 格式信息的特殊颜色
 
     def browse_save_path(self):
@@ -359,7 +403,15 @@ class YouTubeDownloaderApp:
     def _update_format_comboboxes(self):
         """更新视频和音频格式下拉框"""
         # 更新视频格式下拉框
-        video_display_options = [f['display'] for f in self.available_video_formats]
+        video_display_options = []
+        for fmt in self.available_video_formats:
+            # 提取分辨率和扩展名
+            resolution = fmt['display'].split(' ')[0]
+            ext = fmt['display'].split('(')[1].split(',')[0]
+            # 简化显示格式：分辨率 + 扩展名
+            display_text = f"{resolution} ({ext})"
+            video_display_options.append(display_text)
+            
         self.video_format_combobox["values"] = video_display_options
         if video_display_options:
             self.video_format_combobox.current(0)
@@ -369,7 +421,15 @@ class YouTubeDownloaderApp:
             self.logger.warning("未找到可用的视频格式")
 
         # 更新音频格式下拉框
-        audio_display_options = [f['display'] for f in self.available_audio_formats]
+        audio_display_options = []
+        for fmt in self.available_audio_formats:
+            # 提取音频编码和扩展名
+            acodec = fmt['display'].split(' ')[0]
+            ext = fmt['display'].split('(')[1].split(',')[0]
+            # 简化显示格式：音频编码 + 扩展名
+            display_text = f"{acodec} ({ext})"
+            audio_display_options.append(display_text)
+            
         self.audio_format_combobox["values"] = audio_display_options
         if audio_display_options:
             self.audio_format_combobox.current(0)
@@ -413,16 +473,18 @@ class YouTubeDownloaderApp:
             selected_audio_format_display = self.audio_format_var.get()
 
             if selected_video_format_display:
-                for fmt in self.available_video_formats:
-                    if fmt['display'] == selected_video_format_display:
-                        format_id = fmt['format_id']
-                        ext = fmt['ext']
+                # 找到对应的格式ID
+                for i, display in enumerate(video_display_options):
+                    if display == selected_video_format_display:
+                        format_id = self.available_video_formats[i]['format_id']
+                        ext = self.available_video_formats[i]['ext']
                         break
             elif selected_audio_format_display:
-                for fmt in self.available_audio_formats:
-                    if fmt['display'] == selected_audio_format_display:
-                        format_id = fmt['format_id']
-                        ext = fmt['ext']
+                # 找到对应的格式ID
+                for i, display in enumerate(audio_display_options):
+                    if display == selected_audio_format_display:
+                        format_id = self.available_audio_formats[i]['format_id']
+                        ext = self.available_audio_formats[i]['ext']
                         break
         
         if not format_id:
