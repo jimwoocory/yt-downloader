@@ -44,6 +44,7 @@ class YouTubeDownloaderApp:
         self.video_info = {}
         self.available_video_formats = []
         self.available_audio_formats = []
+        self.all_formats = []  # 存储所有格式信息
 
         # 配置日志
         self.setup_logging()
@@ -149,7 +150,8 @@ class YouTubeDownloaderApp:
         options_frame.pack(fill=tk.X, pady=5)
 
         ttk.Label(options_frame, text="保存路径:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.save_path_var = tk.StringVar(value=os.path.join(os.path.expanduser("~"), "Downloads"))
+        # 修改默认保存路径为 D:\Users\Jimwoo\Downloads
+        self.save_path_var = tk.StringVar(value=r"D:\Users\Jimwoo\Downloads")
         ttk.Entry(options_frame, textvariable=self.save_path_var, width=50).grid(row=0, column=1, sticky=tk.W, padx=(0, 5))
         ttk.Button(options_frame, text="浏览...", command=self.browse_save_path).grid(row=0, column=2, sticky=tk.W)
 
@@ -164,9 +166,15 @@ class YouTubeDownloaderApp:
         self.audio_format_combobox = ttk.Combobox(options_frame, textvariable=self.audio_format_var, width=40, state="disabled")
         self.audio_format_combobox.grid(row=2, column=1, sticky=tk.W, padx=5)
 
+        # 自定义格式ID输入
+        ttk.Label(options_frame, text="自定义格式ID:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        self.custom_format_var = tk.StringVar()
+        ttk.Entry(options_frame, textvariable=self.custom_format_var, width=15).grid(row=3, column=1, sticky=tk.W, padx=5)
+        ttk.Label(options_frame, text="(留空则使用推荐格式)").grid(row=3, column=2, sticky=tk.W, pady=5)
+
         # 字幕选项
         self.subtitle_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(options_frame, text="下载字幕", variable=self.subtitle_var).grid(row=3, column=0, sticky=tk.W, pady=5)
+        ttk.Checkbutton(options_frame, text="下载字幕", variable=self.subtitle_var).grid(row=4, column=0, sticky=tk.W, pady=5)
         
         # 按钮
         button_frame = ttk.Frame(main_frame)
@@ -201,6 +209,7 @@ class YouTubeDownloaderApp:
         self.log_text.tag_config("WARNING", foreground="orange")
         self.log_text.tag_config("ERROR", foreground="red")
         self.log_text.tag_config("CRITICAL", foreground="darkred", font=("Microsoft YaHei UI", 10, "bold"))
+        self.log_text.tag_config("FORMAT", foreground="green")  # 格式信息的特殊颜色
 
     def browse_save_path(self):
         """浏览并选择下载保存路径"""
@@ -237,6 +246,7 @@ class YouTubeDownloaderApp:
         self.audio_format_combobox.config(state="disabled")
         self.available_video_formats = []
         self.available_audio_formats = []
+        self.all_formats = []  # 清空所有格式信息
 
         def _fetch():
             try:
@@ -279,9 +289,8 @@ class YouTubeDownloaderApp:
                     video_formats = []
                     audio_formats = []
 
-                    # 收集所有格式信息用于调试
-                    format_debug_info = []
-                    
+                    # 收集所有格式信息用于调试和日志输出
+                    self.logger.info("所有可用格式信息:")
                     for f in formats:
                         format_id = f.get('format_id')
                         ext = f.get('ext')
@@ -290,35 +299,44 @@ class YouTubeDownloaderApp:
                         vcodec = f.get('vcodec')
                         filesize = f.get('filesize')
                         filesize_str = f.get('filesize_approx_str') or (f'{filesize / (1024*1024):.2f}MB' if filesize else '未知大小')
+                        fps = f.get('fps', '?')
+                        format_note = f.get('format_note', '')
                         
-                        # 记录格式信息用于调试
-                        format_debug_info.append({
+                        # 保存所有格式信息
+                        self.all_formats.append({
                             'format_id': format_id,
                             'ext': ext,
                             'resolution': resolution,
                             'acodec': acodec,
-                            'vcodec': vcodec
+                            'vcodec': vcodec,
+                            'filesize': filesize_str,
+                            'fps': fps,
+                            'format_note': format_note
                         })
+                        
+                        # 记录格式信息到日志
+                        format_info = f"格式ID: {format_id}, 扩展名: {ext}, 分辨率: {resolution}, 音频编码: {acodec}, 视频编码: {vcodec}, 大小: {filesize_str}"
+                        if fps != '?':
+                            format_info += f", FPS: {fps}"
+                        if format_note:
+                            format_info += f", 备注: {format_note}"
+                            
+                        self.logger.log(logging.INFO + 1, format_info)  # 使用特殊级别以便在日志中突出显示
 
                         if vcodec != 'none' and resolution != 'audio only': # 视频格式
-                            # 过滤掉不常见的视频格式，并限制分辨率范围
-                            if ext in ['mp4', 'webm'] and resolution and 'p' in resolution:
-                                height = int(resolution.replace('p', ''))
-                                if 1080 <= height <= 4320 or height == 720: # 8K到1080P，包括720P
-                                    video_formats.append({
-                                        'display': f'{resolution} ({ext}, {filesize_str})',
-                                        'format_id': format_id,
-                                        'ext': ext
-                                    })
+                            # 不过滤视频格式，显示所有可用的视频格式
+                            video_formats.append({
+                                'display': f'{resolution} ({ext}, {filesize_str})',
+                                'format_id': format_id,
+                                'ext': ext
+                            })
                         elif acodec != 'none' and vcodec == 'none': # 音频格式
+                            # 不过滤音频格式，显示所有可用的音频格式
                             audio_formats.append({
                                 'display': f'{acodec} ({ext}, {filesize_str})',
                                 'format_id': format_id,
                                 'ext': ext
                             })
-                    
-                    # 记录格式信息到日志
-                    self.logger.debug(f"可用格式信息: {format_debug_info}")
                     
                     # 按照分辨率从高到低排序视频格式
                     video_formats.sort(key=lambda x: int(x['display'].split('p')[0]) if 'p' in x['display'] else 0, reverse=True)
@@ -378,27 +396,37 @@ class YouTubeDownloaderApp:
         save_path = self.save_path_var.get()
         download_subtitles = self.subtitle_var.get()
 
-        selected_video_format_display = self.video_format_var.get()
-        selected_audio_format_display = self.audio_format_var.get()
-
+        # 检查是否使用自定义格式ID
+        custom_format_id = self.custom_format_var.get().strip()
+        
         format_id = None
         ext = None
 
-        if selected_video_format_display:
-            for fmt in self.available_video_formats:
-                if fmt['display'] == selected_video_format_display:
-                    format_id = fmt['format_id']
-                    ext = fmt['ext']
-                    break
-        elif selected_audio_format_display:
-            for fmt in self.available_audio_formats:
-                if fmt['display'] == selected_audio_format_display:
-                    format_id = fmt['format_id']
-                    ext = fmt['ext']
-                    break
+        if custom_format_id:
+            # 使用自定义格式ID
+            format_id = custom_format_id
+            ext = None  # 让yt-dlp自动确定扩展名
+            self.logger.info(f"使用自定义格式ID: {format_id}")
+        else:
+            # 使用下拉框选择的格式
+            selected_video_format_display = self.video_format_var.get()
+            selected_audio_format_display = self.audio_format_var.get()
+
+            if selected_video_format_display:
+                for fmt in self.available_video_formats:
+                    if fmt['display'] == selected_video_format_display:
+                        format_id = fmt['format_id']
+                        ext = fmt['ext']
+                        break
+            elif selected_audio_format_display:
+                for fmt in self.available_audio_formats:
+                    if fmt['display'] == selected_audio_format_display:
+                        format_id = fmt['format_id']
+                        ext = fmt['ext']
+                        break
         
         if not format_id:
-            messagebox.showerror("错误", "请选择一个下载格式")
+            messagebox.showerror("错误", "请选择一个下载格式或输入自定义格式ID")
             return
 
         # 准备下载任务
@@ -691,6 +719,9 @@ def main():
                 level = record.levelname
                 msg = self.format(record)
                 self.log_queue.put((level, msg))
+    
+    # 添加特殊日志级别用于格式信息
+    logging.addLevelName(logging.INFO + 1, "FORMAT")
     
     root.mainloop()
 
