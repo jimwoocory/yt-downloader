@@ -274,7 +274,7 @@ class YouTubeDownloaderApp:
         # 在单独线程中获取信息
         threading.Thread(target=_fetch, daemon=True).start()
     
-   def query_formats(self):
+  def query_formats(self):
         """查询视频格式"""
         url = self.url_entry.get().strip()
         proxy = self.proxy_entry.get().strip() or None
