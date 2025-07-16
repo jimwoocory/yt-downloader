@@ -12,17 +12,6 @@ from datetime import datetime
 import json
 import subprocess
 import platform
-import tempfile
-import requests
-
-class QueueHandler(logging.Handler):
-    """日志处理器，将日志消息放入队列"""
-    def __init__(self, log_queue):
-        super().__init__()
-        self.log_queue = log_queue
-    
-    def emit(self, record):
-        self.log_queue.put((record.levelname, self.format(record)))
 
 class YouTubeDownloaderApp:
     def __init__(self, root):
@@ -30,22 +19,21 @@ class YouTubeDownloaderApp:
         self.root.title("YouTube 下载器")
         self.root.geometry("1000x800")
         self.root.minsize(900, 750)
-        
-        # 设置中文字体支持 - 修复字体设置问题，使用更兼容的方式
-        default_font = tk.font.nametofont("TkDefaultFont")
-        default_font.configure(family="SimHei", size=10)
-        
-        fixed_font = tk.font.nametofont("TkFixedFont")
-        fixed_font.configure(family="SimHei", size=10)
-        
-        # 应用字体设置到所有控件
+
+        # 设置中文字体支持
         self.style = ttk.Style()
-        self.style.configure(".", font=default_font)
-        
-        # 创建下载任务队列和结果队列
-        self.download_queue = queue.Queue()
+        self.style.configure("TLabel", font=("Microsoft YaHei UI", 12))
+        self.style.configure("TButton", font=("Microsoft YaHei UI", 12))
+        self.style.configure("TEntry", font=("Microsoft YaHei UI", 12))
+        self.style.configure("TCombobox", font=("Microsoft YaHei UI", 12))
+        self.style.configure("TScrolledtext", font=("Microsoft YaHei UI", 10))
+        self.style.configure("TLabelframe.Label", font=("Microsoft YaHei UI", 14, "bold"))
+
+        # 日志队列和结果队列
+        self.log_queue = queue.Queue()
         self.result_queue = queue.Queue()
-        
+        self.download_queue = queue.Queue()
+
         # 下载任务列表和控制变量
         self.download_tasks = []
         self.current_task_index = 0
@@ -54,917 +42,675 @@ class YouTubeDownloaderApp:
         
         # 视频信息缓存
         self.video_info = {}
-        
-        # 可用格式信息
-        self.available_formats = {}
-        
+        self.available_video_formats = []
+        self.available_audio_formats = []
+        self.all_formats = []  # 存储所有格式信息
+
         # 配置日志
         self.setup_logging()
+
+        # 创建界面
+        self.create_widgets()
+
+        # 加载下载历史
+        self.load_download_history()
         
-        # 工具目录
-        self.tool_dir = os.path.join(os.path.expanduser("~"), ".youtube_downloader")
-        os.makedirs(self.tool_dir, exist_ok=True)
+        # 启动队列处理线程
+        self.processing_thread = threading.Thread(target=self.process_queue, daemon=True)
+        self.processing_thread.start()
         
-        # 立即显示启动提示窗口
-        self.show_startup_message()
-        
-        # 检查并下载依赖
-        self.check_dependencies()
-    
-    def show_startup_message(self):
-        """显示启动提示窗口"""
-        self.startup_window = tk.Toplevel(self.root)
-        self.startup_window.title("初始化")
-        self.startup_window.geometry("400x200")
-        self.startup_window.resizable(False, False)
-        self.startup_window.transient(self.root)
-        self.startup_window.grab_set()
-        
-        # 居中显示
-        self.startup_window.update_idletasks()
-        width = self.startup_window.winfo_width()
-        height = self.startup_window.winfo_height()
-        x = (self.startup_window.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.startup_window.winfo_screenheight() // 2) - (height // 2)
-        self.startup_window.geometry('{}x{}+{}+{}'.format(width, height, x, y))
-        
-        # 添加提示信息
-        ttk.Label(
-            self.startup_window, 
-            text="YouTube下载器正在初始化...",
-            font=('SimHei', 14)
-        ).pack(pady=20)
-        
-        ttk.Label(
-            self.startup_window, 
-            text="首次启动需要下载必要的依赖文件，请耐心等待",
-            font=('SimHei', 10)
-        ).pack(pady=10)
-        
-        # 添加进度条
-        self.startup_progress_var = tk.DoubleVar()
-        self.startup_progress_bar = ttk.Progressbar(
-            self.startup_window, 
-            variable=self.startup_progress_var, 
-            length=300, 
-            mode='indeterminate'
-        )
-        self.startup_progress_bar.pack(pady=10)
-        self.startup_progress_bar.start()
-        
-        # 添加状态标签
-        self.startup_status = tk.StringVar(value="准备下载依赖...")
-        ttk.Label(
-            self.startup_window, 
-            textvariable=self.startup_status,
-            font=('SimHei', 10)
-        ).pack(pady=10)
-        
-        # 确保窗口可见
-        self.startup_window.deiconify()
-        self.root.update()
-    
+        # 启动日志处理线程
+        self.root.after(100, self.process_log_messages)
+
+        # 用于终止下载的变量
+        self.ydl_instance = None
+        self.is_downloading = False
+        self.download_threads = {}
+
     def setup_logging(self):
         """配置日志系统，将日志输出到GUI"""
         self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.INFO)
-        
-        # 创建日志处理器，将日志输出到GUI
-        self.log_handler = QueueHandler(self.result_queue)
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        self.log_handler.setFormatter(formatter)
-        self.logger.addHandler(self.log_handler)
-        
-        # 添加控制台日志输出，便于调试
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(formatter)
-        self.logger.addHandler(console_handler)
-    
-    def check_dependencies(self):
-        """检查并下载必要的依赖"""
-        # 创建依赖检查窗口
-        self.dependency_window = tk.Toplevel(self.root)
-        self.dependency_window.title("初始化")
-        self.dependency_window.geometry("500x300")
-        self.dependency_window.resizable(False, False)
-        self.dependency_window.transient(self.root)
-        self.dependency_window.grab_set()
-        
-        # 居中显示
-        self.dependency_window.update_idletasks()
-        width = self.dependency_window.winfo_width()
-        height = self.dependency_window.winfo_height()
-        x = (self.dependency_window.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.dependency_window.winfo_screenheight() // 2) - (height // 2)
-        self.dependency_window.geometry('{}x{}+{}+{}'.format(width, height, x, y))
-        
-        # 添加提示信息
-        ttk.Label(
-            self.dependency_window, 
-            text="正在下载重要依赖文件:",
-            font=('SimHei', 12)
-        ).pack(pady=10)
-        
-        # 创建依赖项的框架
-        self.dependencies_frame = ttk.Frame(self.dependency_window)
-        self.dependencies_frame.pack(fill=tk.X, padx=10, pady=5)
-        
-        # yt-dlp依赖项
-        yt_dlp_frame = ttk.Frame(self.dependencies_frame)
-        yt_dlp_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(yt_dlp_frame, text="yt-dlp:", font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.yt_dlp_status = tk.StringVar(value="等待中")
-        ttk.Label(yt_dlp_frame, textvariable=self.yt_dlp_status, font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.yt_dlp_progress_var = tk.DoubleVar()
-        self.yt_dlp_progress_bar = ttk.Progressbar(
-            yt_dlp_frame, 
-            variable=self.yt_dlp_progress_var, 
-            length=300, 
-            mode='determinate'
-        )
-        self.yt_dlp_progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        # FFmpeg依赖项
-        ffmpeg_frame = ttk.Frame(self.dependencies_frame)
-        ffmpeg_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(ffmpeg_frame, text="FFmpeg:", font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.ffmpeg_status = tk.StringVar(value="等待中")
-        ttk.Label(ffmpeg_frame, textvariable=self.ffmpeg_status, font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.ffmpeg_progress_var = tk.DoubleVar()
-        self.ffmpeg_progress_bar = ttk.Progressbar(
-            ffmpeg_frame, 
-            variable=self.ffmpeg_progress_var, 
-            length=300, 
-            mode='determinate'
-        )
-        self.ffmpeg_progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        # 总体进度
-        overall_frame = ttk.Frame(self.dependency_window)
-        overall_frame.pack(fill=tk.X, padx=10, pady=10)
-        
-        ttk.Label(overall_frame, text="总体进度:", font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.overall_status = tk.StringVar(value="准备下载...")
-        ttk.Label(overall_frame, textvariable=self.overall_status, font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.overall_progress_var = tk.DoubleVar()
-        self.overall_progress_bar = ttk.Progressbar(
-            overall_frame, 
-            variable=self.overall_progress_var, 
-            length=300, 
-            mode='determinate'
-        )
-        self.overall_progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        # 添加日志文本框
-        self.dependency_log_text = scrolledtext.ScrolledText(self.dependency_window, wrap=tk.WORD, height=5)
-        self.dependency_log_text.pack(fill=tk.X, padx=10, pady=5)
-        self.dependency_log_text.config(state=tk.DISABLED)
-        
-        # 关闭启动窗口
-        if hasattr(self, 'startup_window') and self.startup_window:
-            self.startup_window.destroy()
-        
-        # 确保窗口可见
-        self.dependency_window.deiconify()
-        self.root.update()
-        
-        # 启动依赖检查线程
-        self.logger.info("开始检查依赖...")
-        self.update_dependency_log("开始检查依赖...")
-        threading.Thread(target=self._check_dependencies_thread, daemon=True).start()
-    
-    def update_dependency_log(self, message):
-        """更新依赖窗口中的日志文本"""
-        self.dependency_log_text.config(state=tk.NORMAL)
-        self.dependency_log_text.insert(tk.END, message + "\n")
-        self.dependency_log_text.see(tk.END)
-        self.dependency_log_text.config(state=tk.DISABLED)
-    
-    def _check_dependencies_thread(self):
-        """在单独线程中检查并下载依赖"""
-        try:
-            # 初始化总体进度
-            total_dependencies = 2
-            completed_dependencies = 0
-            
-            # 检查并下载yt-dlp
-            self.root.after(0, lambda: self.overall_status.set("检查yt-dlp..."))
-            self.root.after(0, lambda: self.yt_dlp_status.set("检查中..."))
-            self.root.after(0, lambda: self.overall_progress_var.set((completed_dependencies / total_dependencies) * 100))
-            
-            self.ydl_path = self._get_yt_dlp_path()
-            completed_dependencies += 1
-            self.root.after(0, lambda: self.overall_progress_var.set((completed_dependencies / total_dependencies) * 100))
-            
-            # 检查并下载FFmpeg
-            self.root.after(0, lambda: self.overall_status.set("检查FFmpeg..."))
-            self.root.after(0, lambda: self.ffmpeg_status.set("检查中..."))
-            
-            self.ffmpeg_path = self._get_ffmpeg_path()
-            completed_dependencies += 1
-            self.root.after(0, lambda: self.overall_progress_var.set((completed_dependencies / total_dependencies) * 100))
-            
-            # 所有依赖都已准备好，关闭依赖窗口并创建主界面
-            self.root.after(0, lambda: self.overall_status.set("初始化完成"))
-            self.root.after(0, lambda: self.yt_dlp_status.set("已完成"))
-            self.root.after(0, lambda: self.ffmpeg_status.set("已完成"))
-            self.logger.info("所有依赖准备就绪")
-            self.update_dependency_log("所有依赖准备就绪")
-            
-            # 延迟1秒让用户看到完成状态
-            self.root.after(1000, self._create_main_interface)
-        except Exception as e:
-            # 确保在发生异常时显示错误信息
-            error_msg = f"初始化失败: {str(e)}"
-            self.logger.error(error_msg)
-            self.update_dependency_log(error_msg)
-            self.root.after(0, lambda: messagebox.showerror("初始化失败", error_msg))
-            # 关闭依赖窗口
-            self.root.after(0, self.dependency_window.destroy)
-            # 退出应用
-            self.root.after(0, self.root.destroy)
-    
-    def _get_ffmpeg_path(self):
-        """自动检测或下载FFmpeg二进制文件"""
-        ffmpeg_dir = os.path.join(self.tool_dir, "ffmpeg")
-        os.makedirs(ffmpeg_dir, exist_ok=True)
-        
-        # 根据操作系统确定FFmpeg文件路径
-        if platform.system() == "Windows":
-            ffmpeg_exe = "ffmpeg.exe"
-            ffplay_exe = "ffplay.exe"
-            ffprobe_exe = "ffprobe.exe"
-        else:  # macOS和Linux
-            ffmpeg_exe = "ffmpeg"
-            ffplay_exe = "ffplay"
-            ffprobe_exe = "ffprobe"
-        
-        ffmpeg_path = os.path.join(ffmpeg_dir, ffmpeg_exe)
-        ffplay_path = os.path.join(ffmpeg_dir, ffplay_exe)
-        ffprobe_path = os.path.join(ffmpeg_dir, ffprobe_exe)
-        
-        # 检查所有三个文件是否存在
-        if all(os.path.exists(path) for path in [ffmpeg_path, ffplay_path, ffprobe_path]):
-            self.logger.info("找到已安装的FFmpeg")
-            self.update_dependency_log("找到已安装的FFmpeg")
-            self.root.after(0, lambda: self.ffmpeg_status.set("已安装"))
-            self.root.after(0, lambda: self.ffmpeg_progress_var.set(100))
-            return ffmpeg_path
-        
-        # 更新状态
-        self.root.after(0, lambda: self.ffmpeg_status.set("准备下载..."))
-        self.root.after(0, lambda: self.ffmpeg_progress_var.set(0))
-        self.update_dependency_log("准备下载FFmpeg...")
-        
-        # 使用国内镜像下载FFmpeg
-        if platform.system() == "Windows":
-            ffmpeg_url = "https://cdn.npmmirror.com/binaries/ffmpeg/latest/ffmpeg-win64-latest.zip"
-        elif platform.system() == "Darwin":  # macOS
-            ffmpeg_url = "https://cdn.npmmirror.com/binaries/ffmpeg/latest/ffmpeg-osx-x64-latest.zip"
-        else:  # Linux
-            ffmpeg_url = "https://cdn.npmmirror.com/binaries/ffmpeg/latest/ffmpeg-linux-x64-latest.zip"
-        
-        try:
-            # 下载FFmpeg
-            self.root.after(0, lambda: self.ffmpeg_status.set("正在下载..."))
-            self.update_dependency_log(f"从 {ffmpeg_url} 下载FFmpeg...")
-            self._download_file_with_progress(ffmpeg_url, ffmpeg_dir, self.ffmpeg_progress_var, self.ffmpeg_status)
-            
-            # 更新进度
-            self.root.after(0, lambda: self.ffmpeg_status.set("正在解压..."))
-            self.root.after(0, lambda: self.ffmpeg_progress_var.set(70))
-            self.update_dependency_log("正在解压FFmpeg...")
-            
-            # 解压文件
-            filename = os.path.basename(urlparse(ffmpeg_url).path)
-            download_path = os.path.join(ffmpeg_dir, filename)
-            
-            if filename.endswith('.zip'):
-                import zipfile
-                with zipfile.ZipFile(download_path, 'r') as zip_ref:
-                    # 查找包含ffmpeg的目录
-                    namelist = zip_ref.namelist()
-                    ffmpeg_found = False
-                    ffplay_found = False
-                    ffprobe_found = False
-                    
-                    # 首先查找根目录中的文件
-                    for name in namelist:
-                        if name.endswith(ffmpeg_exe) and not ffmpeg_found:
-                            zip_ref.extract(name, ffmpeg_dir)
-                            os.rename(os.path.join(ffmpeg_dir, name), ffmpeg_path)
-                            ffmpeg_found = True
-                        elif name.endswith(ffplay_exe) and not ffplay_found:
-                            zip_ref.extract(name, ffmpeg_dir)
-                            os.rename(os.path.join(ffmpeg_dir, name), ffplay_path)
-                            ffplay_found = True
-                        elif name.endswith(ffprobe_exe) and not ffprobe_found:
-                            zip_ref.extract(name, ffmpeg_dir)
-                            os.rename(os.path.join(ffmpeg_dir, name), ffprobe_path)
-                            ffprobe_found = True
-                    
-                    # 如果在根目录中找不到，则在子目录中查找
-                    if not (ffmpeg_found and ffplay_found and ffprobe_found):
-                        for name in namelist:
-                            if '/' in name or '\\' in name:  # 子目录中的文件
-                                dir_name = os.path.dirname(name)
-                                if name.endswith(ffmpeg_exe) and not ffmpeg_found:
-                                    zip_ref.extract(name, ffmpeg_dir)
-                                    os.rename(os.path.join(ffmpeg_dir, name), ffmpeg_path)
-                                    ffmpeg_found = True
-                                elif name.endswith(ffplay_exe) and not ffplay_found:
-                                    zip_ref.extract(name, ffmpeg_dir)
-                                    os.rename(os.path.join(ffmpeg_dir, name), ffplay_path)
-                                    ffplay_found = True
-                                elif name.endswith(ffprobe_exe) and not ffprobe_found:
-                                    zip_ref.extract(name, ffmpeg_dir)
-                                    os.rename(os.path.join(ffmpeg_dir, name), ffprobe_path)
-                                    ffprobe_found = True
-            elif filename.endswith(('.tar.gz', '.tar.xz')):
-                import tarfile
-                with tarfile.open(download_path, 'r') as tar_ref:
-                    # 查找包含ffmpeg的目录
-                    namelist = tar_ref.getnames()
-                    ffmpeg_found = False
-                    ffplay_found = False
-                    ffprobe_found = False
-                    
-                    # 首先查找根目录中的文件
-                    for name in namelist:
-                        if name.endswith(ffmpeg_exe) and not ffmpeg_found:
-                            tar_ref.extract(name, ffmpeg_dir)
-                            os.rename(os.path.join(ffmpeg_dir, name), ffmpeg_path)
-                            ffmpeg_found = True
-                        elif name.endswith(ffplay_exe) and not ffplay_found:
-                            tar_ref.extract(name, ffmpeg_dir)
-                            os.rename(os.path.join(ffmpeg_dir, name), ffplay_path)
-                            ffplay_found = True
-                        elif name.endswith(ffprobe_exe) and not ffprobe_found:
-                            tar_ref.extract(name, ffmpeg_dir)
-                            os.rename(os.path.join(ffmpeg_dir, name), ffprobe_path)
-                            ffprobe_found = True
-                    
-                    # 如果在根目录中找不到，则在子目录中查找
-                    if not (ffmpeg_found and ffplay_found and ffprobe_found):
-                        for name in namelist:
-                            if '/' in name or '\\' in name:  # 子目录中的文件
-                                dir_name = os.path.dirname(name)
-                                if name.endswith(ffmpeg_exe) and not ffmpeg_found:
-                                    tar_ref.extract(name, ffmpeg_dir)
-                                    os.rename(os.path.join(ffmpeg_dir, name), ffmpeg_path)
-                                    ffmpeg_found = True
-                                elif name.endswith(ffplay_exe) and not ffplay_found:
-                                    tar_ref.extract(name, ffmpeg_dir)
-                                    os.rename(os.path.join(ffmpeg_dir, name), ffplay_path)
-                                    ffplay_found = True
-                                elif name.endswith(ffprobe_exe) and not ffprobe_found:
-                                    tar_ref.extract(name, ffmpeg_dir)
-                                    os.rename(os.path.join(ffmpeg_dir, name), ffprobe_path)
-                                    ffprobe_found = True
-            
-            # 清理下载的压缩文件
-            if os.path.exists(download_path):
-                os.remove(download_path)
-            
-            # 添加执行权限
-            for file_path in [ffmpeg_path, ffplay_path, ffprobe_path]:
-                if os.path.exists(file_path) and platform.system() != "Windows":
-                    os.chmod(file_path, 0o755)
-            
-            # 更新进度
-            self.root.after(0, lambda: self.ffmpeg_progress_var.set(100))
-            self.root.after(0, lambda: self.ffmpeg_status.set("下载完成"))
-            self.update_dependency_log("FFmpeg下载完成")
-            
-            self.logger.info("FFmpeg下载完成")
-            return ffmpeg_path
-        except Exception as e:
-            error_msg = f"下载FFmpeg失败: {str(e)}"
-            self.logger.error(error_msg)
-            self.update_dependency_log(error_msg)
-            self.root.after(0, lambda: self.ffmpeg_status.set(f"下载失败: {str(e)}"))
-            # 尝试备用下载源
-            self.logger.info("尝试备用下载源...")
-            self.update_dependency_log("尝试备用下载源...")
-            self.root.after(0, lambda: self.ffmpeg_status.set("尝试备用源..."))
-            self._try_backup_ffmpeg_source()
-            raise
-    
-    def _get_yt_dlp_path(self):
-        """自动检测或下载yt-dlp二进制文件"""
-        yt_dlp_dir = os.path.join(self.tool_dir, "yt-dlp")
-        os.makedirs(yt_dlp_dir, exist_ok=True)
-        
-        # 根据操作系统确定yt-dlp文件路径
-        if platform.system() == "Windows":
-            yt_dlp_exe = "yt-dlp.exe"
-        else:  # macOS和Linux
-            yt_dlp_exe = "yt-dlp"
-        
-        yt_dlp_path = os.path.join(yt_dlp_dir, yt_dlp_exe)
-        
-        # 检查文件是否存在
-        if os.path.exists(yt_dlp_path):
-            self.logger.info("找到已安装的yt-dlp")
-            self.update_dependency_log("找到已安装的yt-dlp")
-            self.root.after(0, lambda: self.yt_dlp_status.set("已安装"))
-            self.root.after(0, lambda: self.yt_dlp_progress_var.set(100))
-            return yt_dlp_path
-        
-        # 更新状态
-        self.root.after(0, lambda: self.yt_dlp_status.set("准备下载..."))
-        self.root.after(0, lambda: self.yt_dlp_progress_var.set(0))
-        self.update_dependency_log("准备下载yt-dlp...")
-        
-        # 使用国内镜像下载yt-dlp
-        if platform.system() == "Windows":
-            yt_dlp_url = "https://cdn.npmmirror.com/binaries/yt-dlp/latest/yt-dlp.exe"
-        else:  # macOS和Linux
-            yt_dlp_url = "https://cdn.npmmirror.com/binaries/yt-dlp/latest/yt-dlp"
-        
-        try:
-            # 下载yt-dlp
-            self.root.after(0, lambda: self.yt_dlp_status.set("正在下载..."))
-            self.update_dependency_log(f"从 {yt_dlp_url} 下载yt-dlp...")
-            self._download_file_with_progress(yt_dlp_url, yt_dlp_dir, self.yt_dlp_progress_var, self.yt_dlp_status)
-            
-            # 更新进度
-            self.root.after(0, lambda: self.yt_dlp_progress_var.set(100))
-            self.root.after(0, lambda: self.yt_dlp_status.set("下载完成"))
-            self.update_dependency_log("yt-dlp下载完成")
-            
-            # 添加执行权限
-            if platform.system() != "Windows":
-                os.chmod(yt_dlp_path, 0o755)
-            
-            self.logger.info("yt-dlp下载完成")
-            return yt_dlp_path
-        except Exception as e:
-            error_msg = f"下载yt-dlp失败: {str(e)}"
-            self.logger.error(error_msg)
-            self.update_dependency_log(error_msg)
-            self.root.after(0, lambda: self.yt_dlp_status.set(f"下载失败: {str(e)}"))
-            # 尝试备用下载源
-            self.logger.info("尝试备用下载源...")
-            self.update_dependency_log("尝试备用下载源...")
-            self.root.after(0, lambda: self.yt_dlp_status.set("尝试备用源..."))
-            self._try_backup_yt_dlp_source()
-            raise
-    
-    def _download_file_with_progress(self, url, target_dir, progress_var, status_var):
-        """下载文件并显示进度"""
-        filename = os.path.basename(urlparse(url).path)
-        target_path = os.path.join(target_dir, filename)
-        
-        try:
-            # 尝试使用requests下载
-            response = requests.get(url, stream=True)
-            response.raise_for_status()
-            
-            total_size = int(response.headers.get('content-length', 0))
-            block_size = 8192
-            downloaded_size = 0
-            
-            with open(target_path, 'wb') as f:
-                for data in response.iter_content(block_size):
-                    if self.abort_all_tasks:
-                        raise Exception("下载已取消")
-                    
-                    downloaded_size += len(data)
-                    f.write(data)
-                    
-                    # 更新进度条
-                    progress = (downloaded_size / total_size) * 100
-                    self.root.after(0, lambda p=progress: progress_var.set(p))
-                    self.root.after(0, lambda s=f"下载中: {progress:.1f}%": status_var.set(s))
-        
-        except Exception as e:
-            # 清理不完整的下载
-            if os.path.exists(target_path):
-                os.remove(target_path)
-            raise
-    
-    def _try_backup_ffmpeg_source(self):
-        """尝试从备用源下载FFmpeg"""
-        ffmpeg_dir = os.path.join(self.tool_dir, "ffmpeg")
-        os.makedirs(ffmpeg_dir, exist_ok=True)
-        
-        # 根据操作系统确定FFmpeg文件路径
-        if platform.system() == "Windows":
-            ffmpeg_exe = "ffmpeg.exe"
-            ffplay_exe = "ffplay.exe"
-            ffprobe_exe = "ffprobe.exe"
-        else:  # macOS和Linux
-            ffmpeg_exe = "ffmpeg"
-            ffplay_exe = "ffplay"
-            ffprobe_exe = "ffprobe"
-        
-        ffmpeg_path = os.path.join(ffmpeg_dir, ffmpeg_exe)
-        ffplay_path = os.path.join(ffmpeg_dir, ffplay_exe)
-        ffprobe_path = os.path.join(ffmpeg_dir, ffprobe_exe)
-        
-        # 使用备用国内镜像
-        if platform.system() == "Windows":
-            ffmpeg_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-        elif platform.system() == "Darwin":  # macOS
-            ffmpeg_url = "https://evermeet.cx/ffmpeg/ffmpeg-latest.zip"
-        else:  # Linux
-            ffmpeg_url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
-        
-        try:
-            # 下载FFmpeg
-            self.root.after(0, lambda: self.ffmpeg_status.set("正在从备用源下载FFmpeg..."))
-            self.root.after(0, lambda: self.ffmpeg_progress_var.set(0))
-            self._download_file_with_progress(ffmpeg_url, ffmpeg_dir, self.ffmpeg_progress_var, self.ffmpeg_status)
-            
-            # 更新进度
-            self.root.after(0, lambda: self.ffmpeg_status.set("正在解压FFmpeg..."))
-            self.root.after(0, lambda: self.ffmpeg_progress_var.set(70))
-            
-            # 解压文件 (与之前相同的解压逻辑)
-            filename = os.path.basename(urlparse(ffmpeg_url).path)
-            download_path = os.path.join(ffmpeg_dir, filename)
-            
-            if filename.endswith('.zip'):
-                import zipfile
-                with zipfile.ZipFile(download_path, 'r') as zip_ref:
-                    # 查找包含ffmpeg的目录
-                    namelist = zip_ref.namelist()
-                    ffmpeg_found = False
-                    ffplay_found = False
-                    ffprobe_found = False
-                    
-                    # 首先查找根目录中的文件
-                    for name in namelist:
-                        if name.endswith(ffmpeg_exe) and not ffmpeg_found:
-                            zip_ref.extract(name, ffmpeg_dir)
-                            os.rename(os.path.join(ffmpeg_dir, name), ffmpeg_path)
-                            ffmpeg_found = True
-                        elif name.endswith(ffplay_exe) and not ffplay_found:
-                            zip_ref.extract(name, ffmpeg_dir)
-                            os.rename(os.path.join(ffmpeg_dir, name), ffplay_path)
-                            ffplay_found = True
-                        elif name.endswith(ffprobe_exe) and not ffprobe_found:
-                            zip_ref.extract(name, ffmpeg_dir)
-                            os.rename(os.path.join(ffmpeg_dir, name), ffprobe_path)
-                            ffprobe_found = True
-                    
-                    # 如果在根目录中找不到，则在子目录中查找
-                    if not (ffmpeg_found and ffplay_found and ffprobe_found):
-                        for name in namelist:
-                            if '/' in name or '\\' in name:  # 子目录中的文件
-                                dir_name = os.path.dirname(name)
-                                if name.endswith(ffmpeg_exe) and not ffmpeg_found:
-                                    zip_ref.extract(name, ffmpeg_dir)
-                                    os.rename(os.path.join(ffmpeg_dir, name), ffmpeg_path)
-                                    ffmpeg_found = True
-                                elif name.endswith(ffplay_exe) and not ffplay_found:
-                                    zip_ref.extract(name, ffmpeg_dir)
-                                    os.rename(os.path.join(ffmpeg_dir, name), ffplay_path)
-                                    ffplay_found = True
-                                elif name.endswith(ffprobe_exe) and not ffprobe_found:
-                                    zip_ref.extract(name, ffmpeg_dir)
-                                    os.rename(os.path.join(ffmpeg_dir, name), ffprobe_path)
-                                    ffprobe_found = True
-            
-            elif filename.endswith(('.tar.gz', '.tar.xz')):
-                import tarfile
-                with tarfile.open(download_path, 'r') as tar_ref:
-                    # 查找包含ffmpeg的目录
-                    namelist = tar_ref.getnames()
-                    ffmpeg_found = False
-                    ffplay_found = False
-                    ffprobe_found = False
-                    
-                    # 首先查找根目录中的文件
-                    for name in namelist:
-                        if name.endswith(ffmpeg_exe) and not ffmpeg_found:
-                            tar_ref.extract(name, ffmpeg_dir)
-                            os.rename(os.path.join(ffmpeg_dir, name), ffmpeg_path)
-                            ffmpeg_found = True
-                        elif name.endswith(ffplay_exe) and not ffplay_found:
-                            tar_ref.extract(name, ffmpeg_dir)
-                            os.rename(os.path.join(ffmpeg_dir, name), ffplay_path)
-                            ffplay_found = True
-                        elif name.endswith(ffprobe_exe) and not ffprobe_found:
-                            tar_ref.extract(name, ffmpeg_dir)
-                            os.rename(os.path.join(ffmpeg_dir, name), ffprobe_path)
-                            ffprobe_found = True
-                    
-                    # 如果在根目录中找不到，则在子目录中查找
-                    if not (ffmpeg_found and ffplay_found and ffprobe_found):
-                        for name in namelist:
-                            if '/' in name or '\\' in name:  # 子目录中的文件
-                                dir_name = os.path.dirname(name)
-                                if name.endswith(ffmpeg_exe) and not ffmpeg_found:
-                                    tar_ref.extract(name, ffmpeg_dir)
-                                    os.rename(os.path.join(ffmpeg_dir, name), ffmpeg_path)
-                                    ffmpeg_found = True
-                                elif name.endswith(ffplay_exe) and not ffplay_found:
-                                    tar_ref.extract(name, ffmpeg_dir)
-                                    os.rename(os.path.join(ffmpeg_dir, name), ffplay_path)
-                                    ffplay_found = True
-                                elif name.endswith(ffprobe_exe) and not ffprobe_found:
-                                    tar_ref.extract(name, ffmpeg_dir)
-                                    os.rename(os.path.join(ffmpeg_dir, name), ffprobe_path)
-                                    ffprobe_found = True
-            
-            # 清理下载的压缩文件
-            if os.path.exists(download_path):
-                os.remove(download_path)
-            
-            # 添加执行权限
-            for file_path in [ffmpeg_path, ffplay_path, ffprobe_path]:
-                if os.path.exists(file_path) and platform.system() != "Windows":
-                    os.chmod(file_path, 0o755)
-            
-            # 更新进度
-            self.root.after(0, lambda: self.ffmpeg_progress_var.set(100))
-            self.root.after(0, lambda: self.ffmpeg_status.set("下载完成"))
-            
-            self.logger.info("FFmpeg从备用源下载完成")
-            return ffmpeg_path
-        except Exception as e:
-            self.logger.error(f"从备用源下载FFmpeg失败: {str(e)}")
-            self.update_dependency_log(f"从备用源下载FFmpeg失败: {str(e)}")
-            self.root.after(0, lambda: self.ffmpeg_status.set(f"备用源下载失败: {str(e)}"))
-            # 再次尝试其他备用源或显示错误
-            error_msg = "无法下载FFmpeg，请确保你的网络连接正常，或手动安装FFmpeg并将其添加到系统路径中。"
-            self.logger.error(error_msg)
-            self.update_dependency_log(error_msg)
-            self.root.after(0, lambda: messagebox.showerror("下载失败", error_msg))
-            raise
-    
-    def _try_backup_yt_dlp_source(self):
-        """尝试从备用源下载yt-dlp"""
-        yt_dlp_dir = os.path.join(self.tool_dir, "yt-dlp")
-        os.makedirs(yt_dlp_dir, exist_ok=True)
-        
-        # 根据操作系统确定yt-dlp文件路径
-        if platform.system() == "Windows":
-            yt_dlp_exe = "yt-dlp.exe"
-        else:  # macOS和Linux
-            yt_dlp_exe = "yt-dlp"
-        
-        yt_dlp_path = os.path.join(yt_dlp_dir, yt_dlp_exe)
-        
-        # 使用备用源
-        if platform.system() == "Windows":
-            yt_dlp_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
-        else:  # macOS和Linux
-            yt_dlp_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
-        
-        try:
-            # 下载yt-dlp
-            self.root.after(0, lambda: self.yt_dlp_status.set("正在从备用源下载yt-dlp..."))
-            self.root.after(0, lambda: self.yt_dlp_progress_var.set(0))
-            self._download_file_with_progress(yt_dlp_url, yt_dlp_dir, self.yt_dlp_progress_var, self.yt_dlp_status)
-            
-            # 更新进度
-            self.root.after(0, lambda: self.yt_dlp_status.set("正在配置yt-dlp..."))
-            self.root.after(0, lambda: self.yt_dlp_progress_var.set(70))
-            
-            # 添加执行权限
-            if platform.system() != "Windows":
-                os.chmod(yt_dlp_path, 0o755)
-            
-            # 更新进度
-            self.root.after(0, lambda: self.yt_dlp_progress_var.set(100))
-            self.root.after(0, lambda: self.yt_dlp_status.set("下载完成"))
-            
-            self.logger.info("yt-dlp从备用源下载完成")
-            return yt_dlp_path
-        except Exception as e:
-            self.logger.error(f"从备用源下载yt-dlp失败: {str(e)}")
-            self.update_dependency_log(f"从备用源下载yt-dlp失败: {str(e)}")
-            self.root.after(0, lambda: self.yt_dlp_status.set(f"备用源下载失败: {str(e)}"))
-            # 显示错误
-            error_msg = "无法下载yt-dlp，请确保你的网络连接正常，或手动安装yt-dlp并将其添加到系统路径中。"
-            self.logger.error(error_msg)
-            self.update_dependency_log(error_msg)
-            self.root.after(0, lambda: messagebox.showerror("下载失败", error_msg))
-            raise
-    
-    def _create_main_interface(self):
-        """创建主界面"""
-        # 关闭依赖窗口
-        if hasattr(self, 'dependency_window') and self.dependency_window:
-            self.dependency_window.destroy()
-        
-        # 创建主窗口
-        self.root.title("YouTube 下载器")
-        
-        # 创建菜单栏
-        self.create_menu()
-        
-        # 创建主框架
-        main_frame = ttk.Frame(self.root, padding="10")
+        self.logger.setLevel(logging.DEBUG)
+
+        # 创建文件处理器
+        log_dir = os.path.join(os.path.expanduser("~"), ".youtube_downloader_logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_filename = datetime.now().strftime("youtube_downloader_%Y%m%d_%H%M%S.log")
+        file_handler = logging.FileHandler(os.path.join(log_dir, log_filename), encoding="utf-8")
+        file_handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        file_handler.setFormatter(formatter)
+        self.logger.addHandler(file_handler)
+
+        # 创建GUI处理器
+        gui_handler = QueueHandler(self.log_queue)
+        gui_handler.setLevel(logging.INFO)
+        gui_handler.setFormatter(formatter)
+        self.logger.addHandler(gui_handler)
+
+        self.logger.info("日志系统初始化完成")
+
+    def process_log_messages(self):
+        """处理日志消息，更新日志UI"""
+        while not self.log_queue.empty():
+            try:
+                level, msg = self.log_queue.get_nowait()
+                self.log_text.config(state=tk.NORMAL)
+                self.log_text.insert(tk.END, f"{msg}\n", level)
+                self.log_text.config(state=tk.DISABLED)
+                self.log_text.see(tk.END)
+            except queue.Empty:
+                pass
+            except Exception as e:
+                self.logger.error(f"处理日志消息失败: {str(e)}")
+        self.root.after(100, self.process_log_messages)
+
+    def create_widgets(self):
+        """创建GUI界面组件"""
+        main_frame = ttk.Frame(self.root, padding="10 10 10 10")
         main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # URL输入和代理设置
+        url_frame = ttk.LabelFrame(main_frame, text="视频URL和代理设置", padding="10 10 10 10")
+        url_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(url_frame, text="视频URL:").grid(row=0, column=0, sticky=tk.W, pady=5, padx=5)
+        self.url_entry = ttk.Entry(url_frame, width=80)
+        self.url_entry.grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
+        self.url_entry.insert(0, "https://www.youtube.com/watch?v=")
+
+        ttk.Button(url_frame, text="获取信息", command=self.fetch_video_info).grid(row=0, column=2, padx=5)
+
+        ttk.Label(url_frame, text="代理 (例如: http://127.0.0.1:7897):").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.proxy_entry = ttk.Entry(url_frame, width=50)
+        self.proxy_entry.grid(row=1, column=1, sticky=tk.W, pady=5, padx=5)
+        self.proxy_entry.insert(0, "http://127.0.0.1:7897")
+
+        # 视频信息预览
+        info_frame = ttk.LabelFrame(main_frame, text="视频信息预览", padding="10 10 10 10")
+        info_frame.pack(fill=tk.X, pady=5)
         
-        # 顶部URL输入区域
-        url_frame = ttk.Frame(main_frame)
-        url_frame.pack(fill=tk.X, pady=(0, 10))
+        self.title_var = tk.StringVar(value="标题: ")
+        self.duration_var = tk.StringVar(value="时长: ")
+        self.views_var = tk.StringVar(value="观看次数: ")
+        self.uploader_var = tk.StringVar(value="上传者: ")
         
-        ttk.Label(url_frame, text="视频URL:", font=('SimHei', 12)).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(info_frame, textvariable=self.title_var).grid(row=0, column=0, sticky=tk.W, pady=2)
+        ttk.Label(info_frame, textvariable=self.duration_var).grid(row=0, column=1, sticky=tk.W, pady=2, padx=20)
+        ttk.Label(info_frame, textvariable=self.views_var).grid(row=0, column=2, sticky=tk.W, pady=2, padx=20)
+        ttk.Label(info_frame, textvariable=self.uploader_var).grid(row=0, column=3, sticky=tk.W, pady=2, padx=20)
         
-        self.url_entry = ttk.Entry(url_frame, width=70, font=('SimHei', 12))
-        self.url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        # 下载选项
+        options_frame = ttk.LabelFrame(main_frame, text="下载选项", padding="10 10 10 10")
+        options_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(options_frame, text="保存路径:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.save_path_var = tk.StringVar(value=os.path.join(os.path.expanduser("~"), "Downloads"))
+        ttk.Entry(options_frame, textvariable=self.save_path_var, width=50).grid(row=0, column=1, sticky=tk.W, padx=(0, 5))
+        ttk.Button(options_frame, text="浏览...", command=self.browse_save_path).grid(row=0, column=2, sticky=tk.W)
+
+        # 下载格式选择
+        ttk.Label(options_frame, text="视频格式:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.video_format_var = tk.StringVar()
+        self.video_format_combobox = ttk.Combobox(options_frame, textvariable=self.video_format_var, width=40, state="disabled")
+        self.video_format_combobox.grid(row=1, column=1, sticky=tk.W, padx=5)
+
+        ttk.Label(options_frame, text="音频格式:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.audio_format_var = tk.StringVar()
+        self.audio_format_combobox = ttk.Combobox(options_frame, textvariable=self.audio_format_var, width=40, state="disabled")
+        self.audio_format_combobox.grid(row=2, column=1, sticky=tk.W, padx=5)
+
+        # 自定义格式ID输入
+        ttk.Label(options_frame, text="自定义格式ID:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        self.custom_format_var = tk.StringVar()
+        ttk.Entry(options_frame, textvariable=self.custom_format_var, width=15).grid(row=3, column=1, sticky=tk.W, padx=5)
+        ttk.Label(options_frame, text="(留空则使用推荐格式)").grid(row=3, column=2, sticky=tk.W, pady=5)
+
+        # 字幕选项
+        self.subtitle_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(options_frame, text="下载字幕", variable=self.subtitle_var).grid(row=4, column=0, sticky=tk.W, pady=5)
         
-        self.fetch_info_btn = ttk.Button(url_frame, text="获取信息", command=self.fetch_video_info)
-        self.fetch_info_btn.pack(side=tk.LEFT)
-        
-        # 视频信息区域
-        info_frame = ttk.LabelFrame(main_frame, text="视频信息", padding="10")
-        info_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-        
-        # 视频缩略图和标题
-        top_info_frame = ttk.Frame(info_frame)
-        top_info_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # 视频缩略图 (使用文本标签代替)
-        thumbnail_frame = ttk.Frame(top_info_frame)
-        thumbnail_frame.pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.thumbnail_label = ttk.Label(thumbnail_frame, text="视频缩略图", width=30, height=15, relief=tk.SUNKEN)
-        self.thumbnail_label.pack()
-        
-        # 视频标题和其他信息
-        title_frame = ttk.Frame(top_info_frame)
-        title_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        self.title_var = tk.StringVar(value="视频标题将显示在这里")
-        ttk.Label(title_frame, textvariable=self.title_var, font=('SimHei', 12, 'bold')).pack(anchor=tk.W)
-        
-        self.duration_var = tk.StringVar(value="时长: --:--")
-        ttk.Label(title_frame, textvariable=self.duration_var, font=('SimHei', 10)).pack(anchor=tk.W, pady=(5, 0))
-        
-        self.views_var = tk.StringVar(value="观看次数: --")
-        ttk.Label(title_frame, textvariable=self.views_var, font=('SimHei', 10)).pack(anchor=tk.W)
-        
-        self.uploader_var = tk.StringVar(value="上传者: --")
-        ttk.Label(title_frame, textvariable=self.uploader_var, font=('SimHei', 10)).pack(anchor=tk.W)
-        
-        # 下载选项区域
-        download_frame = ttk.LabelFrame(info_frame, text="下载选项", padding="10")
-        download_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
-        
-        # 格式选择
-        format_frame = ttk.Frame(download_frame)
-        format_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        ttk.Label(format_frame, text="选择格式:", font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.format_combobox = ttk.Combobox(format_frame, values=[], width=30)
-        self.format_combobox.pack(side=tk.LEFT, padx=(0, 10))
-        self.format_combobox.bind("<<ComboboxSelected>>", self.on_format_selected)
-        
-        # 质量选择
-        quality_frame = ttk.Frame(download_frame)
-        quality_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        ttk.Label(quality_frame, text="选择质量:", font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.quality_combobox = ttk.Combobox(quality_frame, values=[], width=30)
-        self.quality_combobox.pack(side=tk.LEFT, padx=(0, 10))
-        
-        # 输出路径选择
-        path_frame = ttk.Frame(download_frame)
-        path_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        ttk.Label(path_frame, text="保存位置:", font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.path_var = tk.StringVar(value=os.path.expanduser("~/Downloads"))
-        self.path_entry = ttk.Entry(path_frame, textvariable=self.path_var, width=50)
-        self.path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-        
-        self.browse_btn = ttk.Button(path_frame, text="浏览", command=self.browse_output_path)
-        self.browse_btn.pack(side=tk.LEFT)
-        
-        # 下载按钮
-        btn_frame = ttk.Frame(download_frame)
-        btn_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        self.download_btn = ttk.Button(btn_frame, text="开始下载", command=self.start_download, state=tk.DISABLED)
-        self.download_btn.pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.abort_btn = ttk.Button(btn_frame, text="取消下载", command=self.abort_download, state=tk.DISABLED)
-        self.abort_btn.pack(side=tk.LEFT)
-        
-        # 下载进度区域
-        progress_frame = ttk.LabelFrame(main_frame, text="下载进度", padding="10")
-        progress_frame.pack(fill=tk.X, pady=(10, 0))
-        
+        # 按钮
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(pady=10)
+
+        ttk.Button(button_frame, text="开始下载", command=self.start_download, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="终止下载", command=self.stop_download, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="清空日志", command=self.clear_logs, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="查看历史", command=self.show_history, width=15).pack(side=tk.LEFT, padx=5)
+
+        # 下载进度条
+        progress_frame = ttk.LabelFrame(main_frame, text="下载进度", padding="10 10 10 10")
+        progress_frame.pack(fill=tk.X, pady=5)
+
         self.progress_var = tk.DoubleVar()
-        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var, length=100, mode='determinate')
-        self.progress_bar.pack(fill=tk.X, expand=True)
-        
-        self.status_var = tk.StringVar(value="就绪")
-        ttk.Label(progress_frame, textvariable=self.status_var, font=('SimHei', 10)).pack(anchor=tk.W, pady=(5, 0))
-        
-        # 日志区域
-        log_frame = ttk.LabelFrame(main_frame, text="下载日志", padding="10")
-        log_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
-        
-        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, height=10)
+        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var, maximum=100)
+        self.progress_bar.pack(fill=tk.X, expand=True, pady=5)
+
+        self.progress_text = tk.StringVar(value="等待下载...")
+        ttk.Label(progress_frame, textvariable=self.progress_text).pack(fill=tk.X, pady=2)
+
+        # 日志输出区域
+        log_frame = ttk.LabelFrame(main_frame, text="日志输出", padding="10 10 10 10")
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, height=15)
         self.log_text.pack(fill=tk.BOTH, expand=True)
         self.log_text.config(state=tk.DISABLED)
-        
-        # 启动日志处理线程
-        self.log_thread = threading.Thread(target=self.process_log_messages, daemon=True)
-        self.log_thread.start()
-    
-    def create_menu(self):
-        """创建菜单栏"""
-        menubar = tk.Menu(self.root)
-        
-        # 文件菜单
-        file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(label="设置", command=self.open_settings)
-        file_menu.add_separator()
-        file_menu.add_command(label="退出", command=self.root.quit)
-        menubar.add_cascade(label="文件", menu=file_menu)
-        
-        # 帮助菜单
-        help_menu = tk.Menu(menubar, tearoff=0)
-        help_menu.add_command(label="关于", command=self.show_about)
-        menubar.add_cascade(label="帮助", menu=help_menu)
-        
-        # 设置菜单栏
-        self.root.config(menu=menubar)
-    
-    def open_settings(self):
-        """打开设置窗口"""
-        # 创建设置窗口
-        settings_window = tk.Toplevel(self.root)
-        settings_window.title("设置")
-        settings_window.geometry("400x300")
-        settings_window.resizable(False, False)
-        settings_window.transient(self.root)
-        
-        # 居中显示
-        settings_window.update_idletasks()
-        width = settings_window.winfo_width()
-        height = settings_window.winfo_height()
-        x = (settings_window.winfo_screenwidth() // 2) - (width // 2)
-        y = (settings_window.winfo_screenheight() // 2) - (height // 2)
-        settings_window.geometry('{}x{}+{}+{}'.format(width, height, x, y))
-        
-        # 设置内容
-        settings_frame = ttk.Frame(settings_window, padding="10")
-        settings_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # 默认保存路径
-        path_frame = ttk.Frame(settings_frame)
-        path_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        ttk.Label(path_frame, text="默认保存路径:", font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.default_path_var = tk.StringVar(value=os.path.expanduser("~/Downloads"))
-        path_entry = ttk.Entry(path_frame, textvariable=self.default_path_var, width=30)
-        path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-        
-        browse_btn = ttk.Button(path_frame, text="浏览", command=self.browse_default_path)
-        browse_btn.pack(side=tk.LEFT)
-        
-        # 线程数设置
-        thread_frame = ttk.Frame(settings_frame)
-        thread_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        ttk.Label(thread_frame, text="下载线程数:", font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.thread_var = tk.IntVar(value=4)
-        thread_combobox = ttk.Combobox(thread_frame, textvariable=self.thread_var, values=[1, 2, 3, 4, 5, 6, 7, 8], width=5)
-        thread_combobox.pack(side=tk.LEFT)
-        
-        # 保存按钮
-        btn_frame = ttk.Frame(settings_window)
-        btn_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        save_btn = ttk.Button(btn_frame, text="保存设置", command=lambda: self.save_settings(settings_window))
-        save_btn.pack(side=tk.RIGHT, padx=(10, 0))
-        
-        cancel_btn = ttk.Button(btn_frame, text="取消", command=settings_window.destroy)
-        cancel_btn.pack(side=tk.RIGHT)
-    
-    def browse_default_path(self):
-        """浏览默认保存路径"""
-        path = filedialog.askdirectory(title="选择默认保存路径")
+
+        # 配置日志标签颜色
+        self.log_text.tag_config("INFO", foreground="blue")
+        self.log_text.tag_config("WARNING", foreground="orange")
+        self.log_text.tag_config("ERROR", foreground="red")
+        self.log_text.tag_config("CRITICAL", foreground="darkred", font=("Microsoft YaHei UI", 10, "bold"))
+        self.log_text.tag_config("FORMAT", foreground="green")  # 格式信息的特殊颜色
+
+    def browse_save_path(self):
+        """浏览并选择下载保存路径"""
+        path = filedialog.askdirectory()
         if path:
-            self.default_path_var.set(path)
-    
-    def save_settings(self, window):
-        """保存设置"""
-        # 保存默认路径
-        default_path = self.default_path_var.get()
-        if default_path and os.path.exists(default_path):
-            self.path_var.set(default_path)
+            self.save_path_var.set(path)
+            self.logger.info(f"下载路径设置为: {path}")
+
+    def validate_url(self, url):
+        """验证URL是否为有效的YouTube链接"""
+        try:
+            result = urlparse(url)
+            return all([result.scheme, result.netloc, result.path]) and ("youtube.com" in result.netloc or "youtu.be" in result.netloc)
+        except ValueError:
+            return False
+
+    def fetch_video_info(self):
+        """获取视频信息并预览"""
+        url = self.url_entry.get().strip()
+        proxy = self.proxy_entry.get().strip() or None
         
-        # 关闭设置窗口
+        if not self.validate_url(url):
+            messagebox.showerror("错误", "请输入有效的 YouTube 链接")
+            return
+            
+        self.logger.info(f"获取视频信息: {url}")
+        
+        # 清空之前的格式选项
+        self.video_format_combobox.set("")
+        self.audio_format_combobox.set("")
+        self.video_format_combobox["values"] = []
+        self.audio_format_combobox["values"] = []
+        self.video_format_combobox.config(state="disabled")
+        self.audio_format_combobox.config(state="disabled")
+        self.available_video_formats = []
+        self.available_audio_formats = []
+        self.all_formats = []  # 清空所有格式信息
+
+        def _fetch():
+            try:
+                ydl_opts = {
+                    'socket_timeout': 10,
+                    'proxy': proxy,
+                    'quiet': True,
+                    'format': 'bestvideo*+bestaudio/best',
+                    'noplaylist': True,  # 只获取单个视频，不处理播放列表
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info_dict = ydl.extract_info(url, download=False)
+                    
+                    title = info_dict.get('title', '未知标题')
+                    duration = info_dict.get('duration', 0)
+                    views = info_dict.get('view_count', 0)
+                    uploader = info_dict.get('uploader', '未知上传者')
+                    
+                    # 格式化时长
+                    duration_str = "未知"
+                    if duration:
+                        hours, remainder = divmod(int(duration), 3600)
+                        minutes, seconds = divmod(remainder, 60)
+                        if hours > 0:
+                            duration_str = f"{hours}小时{minutes}分{seconds}秒"
+                        else:
+                            duration_str = f"{minutes}分{seconds}秒"
+                    
+                    # 格式化观看次数
+                    views_str = f"{views:,}"
+                    
+                    self.title_var.set(f"标题: {title}")
+                    self.duration_var.set(f"时长: {duration_str}")
+                    self.views_var.set(f"观看次数: {views_str}")
+                    self.uploader_var.set(f"上传者: {uploader}")
+                    
+                    # 过滤并组织视频和音频格式
+                    formats = info_dict.get('formats', [])
+                    video_formats = []
+                    audio_formats = []
+
+                    # 收集所有格式信息用于调试和日志输出
+                    self.logger.info("所有可用格式信息:")
+                    for f in formats:
+                        format_id = f.get('format_id')
+                        ext = f.get('ext')
+                        resolution = f.get('resolution')
+                        acodec = f.get('acodec')
+                        vcodec = f.get('vcodec')
+                        filesize = f.get('filesize')
+                        filesize_str = f.get('filesize_approx_str') or (f'{filesize / (1024*1024):.2f}MB' if filesize else '未知大小')
+                        fps = f.get('fps', '?')
+                        format_note = f.get('format_note', '')
+                        
+                        # 保存所有格式信息
+                        self.all_formats.append({
+                            'format_id': format_id,
+                            'ext': ext,
+                            'resolution': resolution,
+                            'acodec': acodec,
+                            'vcodec': vcodec,
+                            'filesize': filesize_str,
+                            'fps': fps,
+                            'format_note': format_note
+                        })
+                        
+                        # 记录格式信息到日志
+                        format_info = f"格式ID: {format_id}, 扩展名: {ext}, 分辨率: {resolution}, 音频编码: {acodec}, 视频编码: {vcodec}, 大小: {filesize_str}"
+                        if fps != '?':
+                            format_info += f", FPS: {fps}"
+                        if format_note:
+                            format_info += f", 备注: {format_note}"
+                            
+                        self.logger.log(logging.INFO + 1, format_info)  # 使用特殊级别以便在日志中突出显示
+
+                        if vcodec != 'none' and resolution != 'audio only': # 视频格式
+                            # 不过滤视频格式，显示所有可用的视频格式
+                            video_formats.append({
+                                'display': f'{resolution} ({ext}, {filesize_str})',
+                                'format_id': format_id,
+                                'ext': ext
+                            })
+                        elif acodec != 'none' and vcodec == 'none': # 音频格式
+                            # 不过滤音频格式，显示所有可用的音频格式
+                            audio_formats.append({
+                                'display': f'{acodec} ({ext}, {filesize_str})',
+                                'format_id': format_id,
+                                'ext': ext
+                            })
+                    
+                    # 按照分辨率从高到低排序视频格式
+                    video_formats.sort(key=lambda x: int(x['display'].split('p')[0]) if 'p' in x['display'] else 0, reverse=True)
+
+                    self.available_video_formats = video_formats
+                    self.available_audio_formats = audio_formats
+
+                    self.root.after(0, self._update_format_comboboxes)
+                    
+                    # 保存视频信息
+                    self.video_info[url] = info_dict
+                    
+                    self.result_queue.put(("success", f"成功获取视频信息: {title}"))
+            except Exception as e:
+                self.result_queue.put(("error", f"获取视频信息失败: {str(e)}"))
+        
+        # 在单独线程中获取信息
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _update_format_comboboxes(self):
+        """更新视频和音频格式下拉框"""
+        # 更新视频格式下拉框
+        video_display_options = [f['display'] for f in self.available_video_formats]
+        self.video_format_combobox["values"] = video_display_options
+        if video_display_options:
+            self.video_format_combobox.current(0)
+            self.video_format_combobox.config(state="readonly")
+        else:
+            self.video_format_combobox.config(state="disabled")
+            self.logger.warning("未找到可用的视频格式")
+
+        # 更新音频格式下拉框
+        audio_display_options = [f['display'] for f in self.available_audio_formats]
+        self.audio_format_combobox["values"] = audio_display_options
+        if audio_display_options:
+            self.audio_format_combobox.current(0)
+            self.audio_format_combobox.config(state="readonly")
+        else:
+            self.audio_format_combobox.config(state="disabled")
+            self.logger.warning("未找到可用的音频格式")
+
+    def start_download(self):
+        """开始下载"""
+        url = self.url_entry.get().strip()
+
+        if not self.validate_url(url):
+            messagebox.showerror("错误", "请输入有效的 YouTube 链接")
+            return
+
+        proxy = self.proxy_entry.get().strip() or None
+        save_path = self.save_path_var.get()
+        download_subtitles = self.subtitle_var.get()
+
+        # 检查是否使用自定义格式ID
+        custom_format_id = self.custom_format_var.get().strip()
+        
+        format_id = None
+        ext = None
+
+        if custom_format_id:
+            # 使用自定义格式ID
+            format_id = custom_format_id
+            ext = None  # 让yt-dlp自动确定扩展名
+            self.logger.info(f"使用自定义格式ID: {format_id}")
+        else:
+            # 使用下拉框选择的格式
+            selected_video_format_display = self.video_format_var.get()
+            selected_audio_format_display = self.audio_format_var.get()
+
+            if selected_video_format_display:
+                for fmt in self.available_video_formats:
+                    if fmt['display'] == selected_video_format_display:
+                        format_id = fmt['format_id']
+                        ext = fmt['ext']
+                        break
+            elif selected_audio_format_display:
+                for fmt in self.available_audio_formats:
+                    if fmt['display'] == selected_audio_format_display:
+                        format_id = fmt['format_id']
+                        ext = fmt['ext']
+                        break
+        
+        if not format_id:
+            messagebox.showerror("错误", "请选择一个下载格式或输入自定义格式ID")
+            return
+
+        # 准备下载任务
+        self.download_tasks = [url]
+        self.current_task_index = 0
+        self.total_tasks = 1
+        self.abort_all_tasks = False
+        self.update_progress(0, "准备下载...")
+
+        self.logger.info(f"添加下载任务: {url}")
+        self.download_queue.put(("download", url, proxy, save_path, format_id, ext, download_subtitles))
+
+    def stop_download(self):
+        """终止正在进行的下载"""
+        if not self.is_downloading:
+            messagebox.showinfo("提示", "当前没有正在进行的下载")
+            return
+
+        self.abort_all_tasks = True
+        self.logger.info("正在终止所有下载任务...")
+        
+        # 终止当前下载
+        if self.ydl_instance:
+            self.logger.info("正在终止下载...")
+            # 使用 yt_dlp 提供的方法优雅地停止下载
+            self.ydl_instance._abort = True
+            self.ydl_instance = None
+            self.is_downloading = False
+            self.update_progress(0, "下载已终止")
+            self.logger.info("下载已终止")
+        
+        # 等待所有线程结束
+        for task_id, thread in list(self.download_threads.items()):
+            if thread.is_alive():
+                self.logger.info(f"等待任务 {task_id} 终止...")
+                thread.join(timeout=1.0)
+        
+        self.is_downloading = False
+        self.ydl_instance = None
+        self.download_threads = {}
+        self.update_progress(0, "所有下载已终止")
+        self.logger.info("所有下载任务已终止")
+
+    def update_progress(self, percent, message):
+        """更新进度条和进度信息"""
+        self.progress_var.set(percent)
+        self.progress_text.set(message)
+        self.root.update_idletasks()
+
+    def process_queue(self):
+        """处理下载队列"""
+        while True:
+            try:
+                if self.abort_all_tasks:
+                    # 清空队列
+                    while not self.download_queue.empty():
+                        self.download_queue.get()
+                        self.download_queue.task_done()
+                    continue
+                
+                task = self.download_queue.get(timeout=1)
+                if task[0] == "download":
+                    self.current_task_index += 1
+                    self.update_progress(
+                        (self.current_task_index-1) / self.total_tasks * 100, 
+                        f"准备下载 {self.current_task_index}/{self.total_tasks}"
+                    )
+                    # 为每个下载任务创建唯一ID
+                    task_id = f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    
+                    # 在单独的线程中执行下载，以便可以独立控制每个任务
+                    thread = threading.Thread(
+                        target=self._download, 
+                        args=(task_id, task[1], task[2], task[3], task[4], task[5], task[6]),
+                        daemon=True
+                    )
+                    self.download_threads[task_id] = thread
+                    thread.start()
+                self.download_queue.task_done()
+            except queue.Empty:
+                continue
+            except Exception as e:
+                self.logger.error(f"处理队列出错: {str(e)}")
+                self.result_queue.put(("error", f"处理队列出错: {str(e)}"))
+
+    def _download(self, task_id, url, proxy, save_path, format_id, ext, download_subtitles):
+        """下载视频或音频的实际处理函数"""
+        self.is_downloading = True
+
+        try:
+            ydl_opts = {
+                'socket_timeout': 10,
+                'proxy': proxy,
+                'outtmpl': os.path.join(save_path, '%(title)s.%(ext)s'),
+                'progress_hooks': [self.download_hook],
+                'logger': self.logger,
+                'writesubtitles': download_subtitles,
+                'writeautomaticsub': download_subtitles,
+                'subtitleslangs': ['en', 'zh-Hans', 'zh-Hant'],  # 下载多种语言字幕
+                'format': format_id,
+                'ignoreerrors': True,  # 忽略错误，继续处理其他任务
+                'nooverwrites': True,  # 不覆盖已存在的文件
+                'abort_on_unavailable_fragment': True  # 遇到不可用片段时终止下载
+            }
+
+            self.ydl_instance = yt_dlp.YoutubeDL(ydl_opts)
+            info_dict = self.ydl_instance.extract_info(url, download=True)
+
+            if self.abort_all_tasks:  # 确保下载没有被用户终止
+                self.result_queue.put(("info", f"下载已取消: {info_dict.get('title')}"))
+                return
+            
+            self.result_queue.put(("success", f"下载完成: {info_dict.get('title')}"))
+            self.update_progress(
+                self.current_task_index / self.total_tasks * 100, 
+                f"完成 {self.current_task_index}/{self.total_tasks}"
+            )
+            
+            # 保存下载历史
+            self.save_download_history(url, info_dict.get('title'), format_id, save_path)
+
+        except Exception as e:
+            if 'yt_dlp.utils.DownloadError' in str(type(e)) or 'Network' in str(e) or '403' in str(e):
+                self.result_queue.put(("error", f"下载失败，可能是网络问题或视频不可用: {str(e)}"))
+            else:
+                self.result_queue.put(("error", f"下载失败: {str(e)}"))
+        finally:
+            self.is_downloading = False
+            self.ydl_instance = None
+            if task_id in self.download_threads:
+                del self.download_threads[task_id]
+
+    def download_hook(self, d):
+        """下载进度回调函数"""
+        if self.abort_all_tasks:
+            return
+            
+        if d['status'] == 'downloading':
+            percent = d.get('_percent_str', '?')
+            speed = d.get('_speed_str', '?')
+            total_bytes = d.get('_total_bytes_str', '?')
+            downloaded_bytes = d.get('_downloaded_bytes_str', '?')
+            eta = d.get('_eta_str', '?')
+            
+            message = f"下载中: {percent} (速度: {speed}, 已下载: {downloaded_bytes}/{total_bytes}, 预计剩余时间: {eta})"
+            self.root.after(0, lambda: self.update_progress(float(d.get('downloaded_bytes', 0)) / d.get('total_bytes', 1) * 100, message))
+        elif d['status'] == 'finished':
+            self.root.after(0, lambda: self.update_progress(100, "下载完成"))
+            self.logger.info(f"下载完成: {d['filename']}")
+        elif d['status'] == 'error':
+            self.root.after(0, lambda: self.update_progress(0, "下载失败"))
+            self.logger.error(f"下载出错: {d.get('error', '未知错误')}")
+
+    def clear_logs(self):
+        """清空日志输出区域"""
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.delete(1.0, tk.END)
+        self.log_text.config(state=tk.DISABLED)
+    
+    def load_download_history(self):
+        """加载下载历史"""
+        try:
+            history_file = os.path.join(os.path.expanduser("~"), "youtube_downloader_history.json")
+            if os.path.exists(history_file):
+                with open(history_file, "r", encoding="utf-8") as f:
+                    self.download_history = json.load(f)
+            else:
+                self.download_history = []
+        except Exception as e:
+            self.download_history = []
+            self.logger.error(f"加载下载历史失败: {str(e)}")
+    
+    def save_download_history(self, url, title, format_id, save_path):
+        """保存下载历史"""
+        try:
+            history_file = os.path.join(os.path.expanduser("~"), "youtube_downloader_history.json")
+            history_entry = {
+                "url": url,
+                "title": title,
+                "format_id": format_id,
+                "save_path": save_path,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            self.download_history.append(history_entry)
+            
+            # 只保留最近100条记录
+            if len(self.download_history) > 100:
+                self.download_history = self.download_history[-100:]
+            
+            with open(history_file, "w", encoding="utf-8") as f:
+                json.dump(self.download_history, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.logger.error(f"保存下载历史失败: {str(e)}")
+    
+    def show_history(self):
+        """显示下载历史"""
+        if not self.download_history:
+            messagebox.showinfo("下载历史", "暂无下载历史记录")
+            return
+        
+        history_window = tk.Toplevel(self.root)
+        history_window.title("下载历史")
+        history_window.geometry("800x500")
+        history_window.minsize(700, 400)
+        
+        # 创建表格
+        columns = ("序号", "标题", "URL", "格式", "保存路径", "时间")
+        tree = ttk.Treeview(history_window, columns=columns, show="headings")
+        
+        # 设置列宽和标题
+        for col in columns:
+            tree.heading(col, text=col)
+            if col == "标题":
+                tree.column(col, width=200)
+            elif col == "URL":
+                tree.column(col, width=300)
+            elif col == "保存路径":
+                tree.column(col, width=200)
+            else:
+                tree.column(col, width=100)
+        
+        # 填充数据
+        for i, entry in enumerate(self.download_history, 1):
+            tree.insert("", "end", values=(
+                i,
+                entry["title"],
+                entry["url"],
+                entry["format_id"],
+                entry["save_path"],
+                entry["timestamp"]
+            ))
+        
+        # 添加滚动条
+        scrollbar = ttk.Scrollbar(history_window, orient="vertical", command=tree.yview)
+        tree.configure(yscroll=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        tree.pack(fill=tk.BOTH, expand=True)
+        
+        # 双击打开保存路径
+        tree.bind("<Double-1>", lambda event: self.open_save_path(tree))
+    
+    def open_save_path(self, tree):
+        """打开保存路径"""
+        selected_item = tree.selection()
+        if not selected_item:
+            return
+            
+        item = tree.item(selected_item[0])
+        path = item["values"][4]  # 保存路径在第5列
+        
+        if os.path.exists(path):
+            try:
+                if platform.system() == "Windows":
+                    os.startfile(path)
+                elif platform.system() == "Darwin":  # macOS
+                    subprocess.run(["open", path])
+                else:  # Linux
+                    subprocess.run(["xdg-open", path])
+            except Exception as e:
+                self.logger.error(f"打开路径失败: {str(e)}")
+                messagebox.showerror("错误", f"无法打开路径: {str(e)}")
+        else:
+            messagebox.showinfo("提示", "文件或文件夹不存在")
+
+# 日志处理类
+class QueueHandler(logging.Handler):
+    def __init__(self, log_queue):
+        super().__init__()
+        self.log_queue = log_queue
+
+    def emit(self, record):
+        level = record.levelname
+        msg = self.format(record)
+        self.log_queue.put((level, msg))
+
+def main():
+    root = tk.Tk()
+    app = YouTubeDownloaderApp(root)
+    
+    # 检查QueueHandler是否已定义
+    if 'QueueHandler' not in globals():
+        class QueueHandler(logging.Handler):
+            def __init__(self, log_queue):
+                super().__init__()
+                self.log_queue = log_queue
+
+            def emit(self, record):
+                level = record.levelname
+                msg = self.format(record)
+                self.log_queue.put((level, msg))
+    
+    # 添加特殊日志级别用于格式信息
+    logging.addLevelName(logging.INFO + 1, "FORMAT")
+    
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
