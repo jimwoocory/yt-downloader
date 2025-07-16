@@ -16,7 +16,7 @@ import platform
 class YouTubeDownloaderApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("YouTube 下载器")
+        self.root.title("YouTube 下载器 V1")
         self.root.geometry("1000x800")  # 增加窗口高度以容纳新组件
         self.root.minsize(900, 750)
         
@@ -39,6 +39,10 @@ class YouTubeDownloaderApp:
         
         # 视频信息缓存
         self.video_info = {}
+        
+        # 格式信息
+        self.available_video_formats = []
+        self.available_audio_formats = []
         
         # 配置日志
         self.setup_logging()
@@ -126,32 +130,21 @@ class YouTubeDownloaderApp:
         ttk.Entry(save_path_frame, textvariable=self.save_path_var, width=50).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(save_path_frame, text="浏览...", command=self.browse_save_path).pack(side=tk.LEFT)
         
-        # 下载格式预设
-        ttk.Label(options_frame, text="下载格式:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        format_frame = ttk.Frame(options_frame)
-        format_frame.grid(row=1, column=1, sticky=tk.W, pady=5)
+        # 视频格式选择
+        ttk.Label(options_frame, text="视频格式:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.video_format_var = tk.StringVar()
+        self.video_format_combobox = ttk.Combobox(options_frame, textvariable=self.video_format_var, width=40)
+        self.video_format_combobox.grid(row=1, column=1, sticky=tk.W, pady=5, padx=5)
+        self.video_format_combobox.set("请先查询格式")
+        self.video_format_combobox.config(state="disabled")
         
-        self.format_preset = tk.StringVar(value="custom")
-        
-        # 预设选项
-        format_presets = [
-            ("最高质量视频", "bestvideo+bestaudio"),
-            ("720p 视频", "best[height<=720]"),
-            ("480p 视频", "best[height<=480]"),
-            ("360p 视频", "best[height<=360]"),
-            ("仅音频 (MP3)", "bestaudio"),
-            ("仅音频 (原始格式)", "bestaudio"),
-            ("自定义", "custom")
-        ]
-        
-        for i, (text, value) in enumerate(format_presets):
-            ttk.Radiobutton(format_frame, text=text, variable=self.format_preset, value=value).grid(row=i//4, column=i%4, sticky=tk.W, padx=5, pady=2)
-        
-        # 自定义格式ID
-        ttk.Label(options_frame, text="自定义格式ID:").grid(row=2, column=0, sticky=tk.W, pady=5)
-        self.custom_format_entry = ttk.Entry(options_frame, width=20)
-        self.custom_format_entry.grid(row=2, column=1, sticky=tk.W, pady=5, padx=5)
-        self.custom_format_entry.insert(0, "ID号")
+        # 音频格式选择
+        ttk.Label(options_frame, text="音频格式:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.audio_format_var = tk.StringVar()
+        self.audio_format_combobox = ttk.Combobox(options_frame, textvariable=self.audio_format_var, width=40)
+        self.audio_format_combobox.grid(row=2, column=1, sticky=tk.W, pady=5, padx=5)
+        self.audio_format_combobox.set("请先查询格式")
+        self.audio_format_combobox.config(state="disabled")
         
         # 字幕选项
         self.subtitle_var = tk.BooleanVar(value=False)
@@ -282,7 +275,123 @@ class YouTubeDownloaderApp:
             return
             
         self.logger.info(f"查询视频格式: {url}")
-        self.download_queue.put(("query", url, proxy))
+        
+        # 清空下拉菜单
+        self.video_format_combobox.set("请先查询格式")
+        self.video_format_combobox.config(state="disabled")
+        self.audio_format_combobox.set("请先查询格式")
+        self.audio_format_combobox.config(state="disabled")
+        
+        self.available_video_formats = []
+        self.available_audio_formats = []
+        
+        def _query():
+            try:
+                ydl_opts = {
+                    'socket_timeout': 10,
+                    'proxy': proxy,
+                    'quiet': True
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    self.logger.info("正在获取视频格式信息...")
+                    info_dict = ydl.extract_info(url, download=False)
+                    formats = info_dict.get('formats', [info_dict])
+                    
+                    # 筛选视频格式（720p到4320p）
+                    for f in formats:
+                        format_id = f['format_id']
+                        ext = f['ext']
+                        resolution = f.get('resolution', 'N/A')
+                        acodec = f.get('acodec', 'N/A')
+                        vcodec = f.get('vcodec', 'N/A')
+                        filesize = f.get('filesize', 'N/A')
+                        fps = f.get('fps', '?')
+                        
+                        # 提取分辨率中的数字部分
+                        resolution_num = 0
+                        if 'p' in resolution:
+                            try:
+                                resolution_num = int(resolution.replace('p', ''))
+                            except ValueError:
+                                pass
+                        
+                        # 筛选视频格式（720p到4320p，常见视频格式）
+                        if (ext in ['mp4', 'webm', 'mkv'] and 
+                            resolution != 'audio only' and
+                            720 <= resolution_num <= 4320):
+                            self.available_video_formats.append({
+                                'id': format_id,
+                                'ext': ext,
+                                'resolution': resolution,
+                                'acodec': acodec,
+                                'vcodec': vcodec,
+                                'filesize': filesize,
+                                'fps': fps
+                            })
+                        
+                        # 筛选音频格式
+                        if acodec != 'none' and vcodec == 'none':
+                            self.available_audio_formats.append({
+                                'id': format_id,
+                                'ext': ext,
+                                'acodec': acodec,
+                                'filesize': filesize
+                            })
+                    
+                    # 按分辨率排序视频格式（从高到低）
+                    self.available_video_formats.sort(
+                        key=lambda x: int(x['resolution'].replace('p', '')) if 'p' in x['resolution'] else 0,
+                        reverse=True
+                    )
+                    
+                    # 更新下拉菜单
+                    self.root.after(0, self._update_format_comboboxes)
+                    
+                    formats_info = f"\n可用视频格式 for: {info_dict.get('title')}\n"
+                    for f in self.available_video_formats:
+                        formats_info += f"ID: {f['id']}, 格式: {f['ext']}, 分辨率: {f['resolution']}, 帧率: {f['fps']}fps, 音频: {f['acodec']}, 视频: {f['vcodec']}, 大小: {f['filesize']}\n"
+                    
+                    formats_info += "\n可用音频格式:\n"
+                    for f in self.available_audio_formats:
+                        formats_info += f"ID: {f['id']}, 格式: {f['ext']}, 音频: {f['acodec']}, 大小: {f['filesize']}\n"
+                    
+                    self.result_queue.put(("info", formats_info))
+            except Exception as e:
+                self.result_queue.put(("error", f"查询格式失败: {str(e)}"))
+        
+        # 在单独线程中查询格式
+        threading.Thread(target=_query, daemon=True).start()
+    
+    def _update_format_comboboxes(self):
+        """更新格式下拉菜单"""
+        # 更新视频格式下拉菜单
+        if self.available_video_formats:
+            video_format_values = []
+            for f in self.available_video_formats:
+                filesize_str = f['filesize'] if f['filesize'] != 'N/A' else '未知大小'
+                video_format_values.append(f"{f['resolution']} ({f['ext']}, {filesize_str})")
+            
+            self.video_format_combobox["values"] = video_format_values
+            self.video_format_combobox.config(state="readonly")
+            self.video_format_combobox.current(0)  # 默认选择最高质量
+        else:
+            self.video_format_combobox["values"] = ["无可用视频格式"]
+            self.video_format_combobox.config(state="disabled")
+        
+        # 更新音频格式下拉菜单
+        if self.available_audio_formats:
+            audio_format_values = []
+            for f in self.available_audio_formats:
+                filesize_str = f['filesize'] if f['filesize'] != 'N/A' else '未知大小'
+                audio_format_values.append(f"{f['acodec']} ({f['ext']}, {filesize_str})")
+            
+            self.audio_format_combobox["values"] = audio_format_values
+            self.audio_format_combobox.config(state="readonly")
+            self.audio_format_combobox.current(0)  # 默认选择第一个
+        else:
+            self.audio_format_combobox["values"] = ["无可用音频格式"]
+            self.audio_format_combobox.config(state="disabled")
     
     def start_download(self):
         """开始下载视频或音频"""
@@ -304,19 +413,37 @@ class YouTubeDownloaderApp:
         
         proxy = self.proxy_entry.get().strip() or None
         save_path = self.save_path_var.get()
-        format_preset = self.format_preset.get()
-        custom_format = self.custom_format_entry.get().strip()
         download_subtitles = self.subtitle_var.get()
         thread_count = int(self.threads_var.get())
         transcode = self.transcode_var.get()
         transcode_format = self.transcode_format.get()
         
-        # 确定最终使用的格式ID
-        format_id = custom_format if format_preset == "custom" else format_preset
+        # 获取用户选择的格式
+        video_format_index = self.video_format_combobox.current()
+        audio_format_index = self.audio_format_combobox.current()
         
-        if format_preset == "custom" and not format_id:
-            messagebox.showerror("错误", "自定义格式ID不能为空")
+        # 准备下载格式
+        selected_formats = []
+        
+        # 添加视频格式
+        if video_format_index >= 0 and self.available_video_formats:
+            video_format = self.available_video_formats[video_format_index]
+            selected_formats.append(video_format['id'])
+            self.logger.info(f"选择视频格式: {video_format['resolution']} ({video_format['id']})")
+        
+        # 添加音频格式
+        if audio_format_index >= 0 and self.available_audio_formats:
+            audio_format = self.available_audio_formats[audio_format_index]
+            selected_formats.append(audio_format['id'])
+            self.logger.info(f"选择音频格式: {audio_format['acodec']} ({audio_format['id']})")
+        
+        # 如果没有选择任何格式，使用默认选项
+        if not selected_formats:
+            messagebox.showerror("错误", "请至少选择一种视频或音频格式")
             return
+        
+        # 构建最终的格式选择
+        format_id = '+'.join(selected_formats) if len(selected_formats) > 1 else selected_formats[0]
         
         # 准备下载任务
         self.download_tasks = urls.copy()
@@ -399,35 +526,9 @@ class YouTubeDownloaderApp:
     
     def _query_formats(self, url, proxy):
         """查询视频格式的实际处理函数"""
-        try:
-            ydl_opts = {
-                'socket_timeout': 10,
-                'proxy': proxy,
-                'quiet': True
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                self.logger.info("正在获取视频信息...")
-                info_dict = ydl.extract_info(url, download=False)
-                formats = info_dict.get('formats', [info_dict])
-                
-                formats_info = f"\n可用格式 for: {info_dict.get('title')}\n"
-                for f in formats:
-                    format_id = f['format_id']
-                    ext = f['ext']
-                    resolution = f.get('resolution', 'N/A')
-                    acodec = f.get('acodec', 'N/A')
-                    vcodec = f.get('vcodec', 'N/A')
-                    filesize = f.get('filesize', 'N/A')
-                    
-                    # 只显示常见的格式
-                    if (ext in ['mp4', 'webm', 'mkv', 'flv', 'avi'] and resolution != 'audio only') or \
-                       (acodec != 'none' and resolution == 'audio only'):
-                        formats_info += f"ID: {format_id}, 格式: {ext}, 分辨率: {resolution}, 音频: {acodec}, 视频: {vcodec}, 大小: {filesize}\n"
-            
-            self.result_queue.put(("info", formats_info))
-        except Exception as e:
-            self.result_queue.put(("error", f"查询格式失败: {str(e)}"))
+        # 此函数与query_formats中的_query函数功能相同，保留用于兼容
+        # 实际使用中，所有格式查询都通过query_formats方法完成
+        pass
     
     def _download(self, task_id, url, proxy, save_path, format_id, download_subtitles, thread_count, transcode, transcode_format):
         """下载视频或音频的实际处理函数"""
