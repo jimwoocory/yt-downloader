@@ -694,6 +694,13 @@ class YouTubeDownloaderApp:
             return ffmpeg_path
         except Exception as e:
             self.logger.error(f"从备用源下载FFmpeg失败: {str(e)}")
+            self.update_dependency_log(f"从备用源下载FFmpeg失败: {str(e)}")
+            self.root.after(0, lambda: self.ffmpeg_status.set(f"备用源下载失败: {str(e)}"))
+            # 再次尝试其他备用源或显示错误
+            error_msg = "无法下载FFmpeg，请确保你的网络连接正常，或手动安装FFmpeg并将其添加到系统路径中。"
+            self.logger.error(error_msg)
+            self.update_dependency_log(error_msg)
+            self.root.after(0, lambda: messagebox.showerror("下载失败", error_msg))
             raise
     
     def _try_backup_yt_dlp_source(self):
@@ -722,17 +729,28 @@ class YouTubeDownloaderApp:
             self._download_file_with_progress(yt_dlp_url, yt_dlp_dir, self.yt_dlp_progress_var, self.yt_dlp_status)
             
             # 更新进度
-            self.root.after(0, lambda: self.yt_dlp_progress_var.set(100))
-            self.root.after(0, lambda: self.yt_dlp_status.set("下载完成"))
+            self.root.after(0, lambda: self.yt_dlp_status.set("正在配置yt-dlp..."))
+            self.root.after(0, lambda: self.yt_dlp_progress_var.set(70))
             
             # 添加执行权限
             if platform.system() != "Windows":
                 os.chmod(yt_dlp_path, 0o755)
             
+            # 更新进度
+            self.root.after(0, lambda: self.yt_dlp_progress_var.set(100))
+            self.root.after(0, lambda: self.yt_dlp_status.set("下载完成"))
+            
             self.logger.info("yt-dlp从备用源下载完成")
             return yt_dlp_path
         except Exception as e:
             self.logger.error(f"从备用源下载yt-dlp失败: {str(e)}")
+            self.update_dependency_log(f"从备用源下载yt-dlp失败: {str(e)}")
+            self.root.after(0, lambda: self.yt_dlp_status.set(f"备用源下载失败: {str(e)}"))
+            # 显示错误
+            error_msg = "无法下载yt-dlp，请确保你的网络连接正常，或手动安装yt-dlp并将其添加到系统路径中。"
+            self.logger.error(error_msg)
+            self.update_dependency_log(error_msg)
+            self.root.after(0, lambda: messagebox.showerror("下载失败", error_msg))
             raise
     
     def _create_main_interface(self):
@@ -741,91 +759,212 @@ class YouTubeDownloaderApp:
         if hasattr(self, 'dependency_window') and self.dependency_window:
             self.dependency_window.destroy()
         
-        # 创建主界面
-        # URL输入和代理设置
-        url_frame = ttk.LabelFrame(self.root, text="视频URL和代理设置", padding="10 10 10 10")
-        url_frame.pack(fill=tk.X, pady=5, ipady=5)
+        # 创建主窗口
+        self.root.title("YouTube 下载器")
         
-        url_input_frame = ttk.Frame(url_frame)
-        url_input_frame.pack(fill=tk.X, pady=5)
+        # 创建菜单栏
+        self.create_menu()
         
-        ttk.Label(url_input_frame, text="视频URL:").grid(row=0, column=0, sticky=tk.W, pady=5, padx=5)
-        self.url_entry = ttk.Entry(url_input_frame, width=70)
-        self.url_entry.grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
-        self.url_entry.insert(0, "https://www.youtube.com/watch?v=")
+        # 创建主框架
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
         
-        ttk.Button(url_input_frame, text="获取信息", command=self.fetch_video_info).grid(row=0, column=2, padx=5)
+        # 顶部URL输入区域
+        url_frame = ttk.Frame(main_frame)
+        url_frame.pack(fill=tk.X, pady=(0, 10))
         
-        # 批量下载支持
-        ttk.Label(url_frame, text="或批量输入URLs (每行一个):").grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.urls_text = scrolledtext.ScrolledText(url_frame, wrap=tk.WORD, height=3)
-        self.urls_text.grid(row=1, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
+        ttk.Label(url_frame, text="视频URL:", font=('SimHei', 12)).pack(side=tk.LEFT, padx=(0, 10))
         
-        proxy_frame = ttk.Frame(url_frame)
-        proxy_frame.pack(fill=tk.X, pady=5)
+        self.url_entry = ttk.Entry(url_frame, width=70, font=('SimHei', 12))
+        self.url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
         
-        ttk.Label(proxy_frame, text="代理 (例如: http://127.0.0.1:7897):").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.proxy_entry = ttk.Entry(proxy_frame, width=50)
-        self.proxy_entry.grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
-        self.proxy_entry.insert(0, "http://127.0.0.1:7897")
+        self.fetch_info_btn = ttk.Button(url_frame, text="获取信息", command=self.fetch_video_info)
+        self.fetch_info_btn.pack(side=tk.LEFT)
         
-        # 视频信息预览
-        info_frame = ttk.LabelFrame(self.root, text="视频信息预览", padding="10 10 10 10")
-        info_frame.pack(fill=tk.X, pady=5, ipady=5)
+        # 视频信息区域
+        info_frame = ttk.LabelFrame(main_frame, text="视频信息", padding="10")
+        info_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         
-        self.title_var = tk.StringVar(value="标题: ")
-        self.duration_var = tk.StringVar(value="时长: ")
-        self.views_var = tk.StringVar(value="观看次数: ")
-        self.uploader_var = tk.StringVar(value="上传者: ")
+        # 视频缩略图和标题
+        top_info_frame = ttk.Frame(info_frame)
+        top_info_frame.pack(fill=tk.X, pady=(0, 10))
         
-        # 美化信息显示
-        info_display_frame = ttk.Frame(info_frame)
-        info_display_frame.pack(fill=tk.X, expand=True)
+        # 视频缩略图 (使用文本标签代替)
+        thumbnail_frame = ttk.Frame(top_info_frame)
+        thumbnail_frame.pack(side=tk.LEFT, padx=(0, 10))
         
-        ttk.Label(info_display_frame, textvariable=self.title_var).grid(row=0, column=0, sticky=tk.W, pady=2, padx=5)
-        ttk.Label(info_display_frame, textvariable=self.duration_var).grid(row=0, column=1, sticky=tk.W, pady=2, padx=20)
-        ttk.Label(info_display_frame, textvariable=self.views_var).grid(row=0, column=2, sticky=tk.W, pady=2, padx=20)
-        ttk.Label(info_display_frame, textvariable=self.uploader_var).grid(row=0, column=3, sticky=tk.W, pady=2, padx=20)
+        self.thumbnail_label = ttk.Label(thumbnail_frame, text="视频缩略图", width=30, height=15, relief=tk.SUNKEN)
+        self.thumbnail_label.pack()
         
-        # 下载选项
-        options_frame = ttk.LabelFrame(self.root, text="下载选项", padding="10 10 10 10")
-        options_frame.pack(fill=tk.X, pady=5, ipady=5)
+        # 视频标题和其他信息
+        title_frame = ttk.Frame(top_info_frame)
+        title_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # 保存路径设置
-        save_path_frame = ttk.Frame(options_frame)
-        save_path_frame.pack(fill=tk.X, pady=5)
+        self.title_var = tk.StringVar(value="视频标题将显示在这里")
+        ttk.Label(title_frame, textvariable=self.title_var, font=('SimHei', 12, 'bold')).pack(anchor=tk.W)
         
-        ttk.Label(save_path_frame, text="保存路径:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.save_path_var = tk.StringVar(value=r"D:\Users\Jimwoo\Downloads")
-        ttk.Entry(save_path_frame, textvariable=self.save_path_var, width=50).grid(row=0, column=1, sticky=tk.W, padx=(0, 5))
-        ttk.Button(save_path_frame, text="浏览...", command=self.browse_save_path).grid(row=0, column=2, sticky=tk.W)
+        self.duration_var = tk.StringVar(value="时长: --:--")
+        ttk.Label(title_frame, textvariable=self.duration_var, font=('SimHei', 10)).pack(anchor=tk.W, pady=(5, 0))
         
-        # 下载格式选择
-        format_frame = ttk.Frame(options_frame)
-        format_frame.pack(fill=tk.X, pady=5)
+        self.views_var = tk.StringVar(value="观看次数: --")
+        ttk.Label(title_frame, textvariable=self.views_var, font=('SimHei', 10)).pack(anchor=tk.W)
         
-        # 视频格式选择
-        video_format_frame = ttk.Frame(format_frame)
-        video_format_frame.pack(fill=tk.X, pady=2)
+        self.uploader_var = tk.StringVar(value="上传者: --")
+        ttk.Label(title_frame, textvariable=self.uploader_var, font=('SimHei', 10)).pack(anchor=tk.W)
         
-        ttk.Label(video_format_frame, text="视频格式:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.video_format_var = tk.StringVar()
-        self.video_format_combobox = ttk.Combobox(video_format_frame, textvariable=self.video_format_var, width=40, state="disabled")
-        self.video_format_combobox.grid(row=0, column=1, sticky=tk.W, padx=5)
+        # 下载选项区域
+        download_frame = ttk.LabelFrame(info_frame, text="下载选项", padding="10")
+        download_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
         
-        # 音频格式选择
-        audio_format_frame = ttk.Frame(format_frame)
-        audio_format_frame.pack(fill=tk.X, pady=2)
+        # 格式选择
+        format_frame = ttk.Frame(download_frame)
+        format_frame.pack(fill=tk.X, pady=(0, 10))
         
-        ttk.Label(audio_format_frame, text="音频格式:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.audio_format_var = tk.StringVar()
-        self.audio_format_combobox = ttk.Combobox(audio_format_frame, textvariable=self.audio_format_var, width=40, state="disabled")
-        self.audio_format_combobox.grid(row=0, column=1, sticky=tk.W, padx=5)
+        ttk.Label(format_frame, text="选择格式:", font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
         
-        # 自定义格式ID输入
-        custom_format_frame = ttk.Frame(options_frame)
-        custom_format_frame.pack(fill=tk.X, pady=5)
+        self.format_combobox = ttk.Combobox(format_frame, values=[], width=30)
+        self.format_combobox.pack(side=tk.LEFT, padx=(0, 10))
+        self.format_combobox.bind("<<ComboboxSelected>>", self.on_format_selected)
         
-        ttk.Label(custom_format_frame, text="自定义格式ID:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.custom_format_var = tk.StringVar()
-        ttk.Entry(custom_format_frame, textvariable=self.custom_format_var, width=15).
+        # 质量选择
+        quality_frame = ttk.Frame(download_frame)
+        quality_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(quality_frame, text="选择质量:", font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.quality_combobox = ttk.Combobox(quality_frame, values=[], width=30)
+        self.quality_combobox.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # 输出路径选择
+        path_frame = ttk.Frame(download_frame)
+        path_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(path_frame, text="保存位置:", font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.path_var = tk.StringVar(value=os.path.expanduser("~/Downloads"))
+        self.path_entry = ttk.Entry(path_frame, textvariable=self.path_var, width=50)
+        self.path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        
+        self.browse_btn = ttk.Button(path_frame, text="浏览", command=self.browse_output_path)
+        self.browse_btn.pack(side=tk.LEFT)
+        
+        # 下载按钮
+        btn_frame = ttk.Frame(download_frame)
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        self.download_btn = ttk.Button(btn_frame, text="开始下载", command=self.start_download, state=tk.DISABLED)
+        self.download_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.abort_btn = ttk.Button(btn_frame, text="取消下载", command=self.abort_download, state=tk.DISABLED)
+        self.abort_btn.pack(side=tk.LEFT)
+        
+        # 下载进度区域
+        progress_frame = ttk.LabelFrame(main_frame, text="下载进度", padding="10")
+        progress_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var, length=100, mode='determinate')
+        self.progress_bar.pack(fill=tk.X, expand=True)
+        
+        self.status_var = tk.StringVar(value="就绪")
+        ttk.Label(progress_frame, textvariable=self.status_var, font=('SimHei', 10)).pack(anchor=tk.W, pady=(5, 0))
+        
+        # 日志区域
+        log_frame = ttk.LabelFrame(main_frame, text="下载日志", padding="10")
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+        
+        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, height=10)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        self.log_text.config(state=tk.DISABLED)
+        
+        # 启动日志处理线程
+        self.log_thread = threading.Thread(target=self.process_log_messages, daemon=True)
+        self.log_thread.start()
+    
+    def create_menu(self):
+        """创建菜单栏"""
+        menubar = tk.Menu(self.root)
+        
+        # 文件菜单
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="设置", command=self.open_settings)
+        file_menu.add_separator()
+        file_menu.add_command(label="退出", command=self.root.quit)
+        menubar.add_cascade(label="文件", menu=file_menu)
+        
+        # 帮助菜单
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="关于", command=self.show_about)
+        menubar.add_cascade(label="帮助", menu=help_menu)
+        
+        # 设置菜单栏
+        self.root.config(menu=menubar)
+    
+    def open_settings(self):
+        """打开设置窗口"""
+        # 创建设置窗口
+        settings_window = tk.Toplevel(self.root)
+        settings_window.title("设置")
+        settings_window.geometry("400x300")
+        settings_window.resizable(False, False)
+        settings_window.transient(self.root)
+        
+        # 居中显示
+        settings_window.update_idletasks()
+        width = settings_window.winfo_width()
+        height = settings_window.winfo_height()
+        x = (settings_window.winfo_screenwidth() // 2) - (width // 2)
+        y = (settings_window.winfo_screenheight() // 2) - (height // 2)
+        settings_window.geometry('{}x{}+{}+{}'.format(width, height, x, y))
+        
+        # 设置内容
+        settings_frame = ttk.Frame(settings_window, padding="10")
+        settings_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 默认保存路径
+        path_frame = ttk.Frame(settings_frame)
+        path_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(path_frame, text="默认保存路径:", font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.default_path_var = tk.StringVar(value=os.path.expanduser("~/Downloads"))
+        path_entry = ttk.Entry(path_frame, textvariable=self.default_path_var, width=30)
+        path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        
+        browse_btn = ttk.Button(path_frame, text="浏览", command=self.browse_default_path)
+        browse_btn.pack(side=tk.LEFT)
+        
+        # 线程数设置
+        thread_frame = ttk.Frame(settings_frame)
+        thread_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(thread_frame, text="下载线程数:", font=('SimHei', 10)).pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.thread_var = tk.IntVar(value=4)
+        thread_combobox = ttk.Combobox(thread_frame, textvariable=self.thread_var, values=[1, 2, 3, 4, 5, 6, 7, 8], width=5)
+        thread_combobox.pack(side=tk.LEFT)
+        
+        # 保存按钮
+        btn_frame = ttk.Frame(settings_window)
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        save_btn = ttk.Button(btn_frame, text="保存设置", command=lambda: self.save_settings(settings_window))
+        save_btn.pack(side=tk.RIGHT, padx=(10, 0))
+        
+        cancel_btn = ttk.Button(btn_frame, text="取消", command=settings_window.destroy)
+        cancel_btn.pack(side=tk.RIGHT)
+    
+    def browse_default_path(self):
+        """浏览默认保存路径"""
+        path = filedialog.askdirectory(title="选择默认保存路径")
+        if path:
+            self.default_path_var.set(path)
+    
+    def save_settings(self, window):
+        """保存设置"""
+        # 保存默认路径
+        default_path = self.default_path_var.get()
+        if default_path and os.path.exists(default_path):
+            self.path_var.set(default_path)
+        
+        # 关闭设置窗口
