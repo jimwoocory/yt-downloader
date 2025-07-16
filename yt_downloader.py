@@ -5,17 +5,14 @@ import threading
 import queue
 import logging
 import os
-import sys
-import subprocess
 from datetime import datetime
 import json
-import platform
 
 class YouTubeDownloaderApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("YouTube 下载器 V1")
-        self.root.geometry("800x650")
+        self.root.title("YouTube 下载器")
+        self.root.geometry("800x600")
         
         # 设置中文字体
         self.style = ttk.Style()
@@ -31,17 +28,12 @@ class YouTubeDownloaderApp:
         self.current_task_index = 0
         self.total_tasks = 0
         self.abort_all_tasks = False
-        self.ydl_instance = None
-        self.is_downloading = False
         
         # 创建GUI组件
         self.create_widgets()
         
         # 设置日志
         self.setup_logging()
-        
-        # 检查FFmpeg
-        self.ffmpeg_path = self.check_ffmpeg()
         
         # 启动队列处理线程
         self.processing_thread = threading.Thread(target=self.process_queue, daemon=True)
@@ -142,9 +134,6 @@ class YouTubeDownloaderApp:
         ttk.Label(options_frame, text="线程数:").grid(row=0, column=1, sticky=tk.W, pady=5)
         ttk.Combobox(options_frame, textvariable=self.threads_var, values=["1", "2", "4", "8", "16"], width=5).grid(row=0, column=2, sticky=tk.W, pady=5, padx=5)
         
-        self.merge_format_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(options_frame, text="合并音视频", variable=self.merge_format_var).grid(row=0, column=3, sticky=tk.W, pady=5)
-        
         # 下载按钮
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=10)
@@ -170,12 +159,6 @@ class YouTubeDownloaderApp:
         self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, height=10)
         self.log_text.pack(fill=tk.BOTH, expand=True)
         self.log_text.config(state=tk.DISABLED)
-        
-        # 设置日志标签颜色
-        self.log_text.tag_configure("ERROR", foreground="red")
-        self.log_text.tag_configure("INFO", foreground="black")
-        self.log_text.tag_configure("WARNING", foreground="orange")
-        self.log_text.tag_configure("SUCCESS", foreground="green")
     
     def browse_save_path(self):
         """浏览并选择保存路径"""
@@ -186,7 +169,6 @@ class YouTubeDownloaderApp:
     def validate_url(self, url):
         """验证URL格式"""
         try:
-            from urllib.parse import urlparse
             result = urlparse(url)
             return all([result.scheme, result.netloc])
         except ValueError:
@@ -283,9 +265,9 @@ class YouTubeDownloaderApp:
                     for f in self.available_audio_formats:
                         formats_info += f"ID: {f['id']}, 格式: {f['ext']}, 音频: {f['acodec']}, 大小: {f['filesize']}\n"
                     
-                    self.result_queue.put(("INFO", formats_info))
+                    self.result_queue.put(("info", formats_info))
             except Exception as e:
-                self.result_queue.put(("ERROR", f"查询格式失败: {str(e)}"))
+                self.result_queue.put(("error", f"查询格式失败: {str(e)}"))
         
         # 在单独线程中查询格式
         threading.Thread(target=_query, daemon=True).start()
@@ -328,7 +310,6 @@ class YouTubeDownloaderApp:
         custom_format_id = self.custom_format_var.get().strip()
         download_subtitles = self.subtitle_var.get()
         thread_count = int(self.threads_var.get())
-        merge_formats = self.merge_format_var.get()
         
         if not self.validate_url(url):
             messagebox.showerror("错误", "请输入有效的 YouTube 链接")
@@ -349,7 +330,7 @@ class YouTubeDownloaderApp:
         
         # 创建下载队列
         self.download_queue = queue.Queue()
-        self.download_queue.put(("download", url, proxy, save_path, custom_format_id, download_subtitles, thread_count, merge_formats))
+        self.download_queue.put(("download", url, proxy, save_path, custom_format_id, download_subtitles, thread_count))
     
     def start_download(self):
         """开始下载视频或音频"""
@@ -358,7 +339,6 @@ class YouTubeDownloaderApp:
         save_path = self.save_path_var.get()
         download_subtitles = self.subtitle_var.get()
         thread_count = int(self.threads_var.get())
-        merge_formats = self.merge_format_var.get()
         
         if not self.validate_url(url):
             messagebox.showerror("错误", "请输入有效的 YouTube 链接")
@@ -402,15 +382,12 @@ class YouTubeDownloaderApp:
         
         # 创建下载队列
         self.download_queue = queue.Queue()
-        self.download_queue.put(("download", url, proxy, save_path, format_id, download_subtitles, thread_count, merge_formats))
+        self.download_queue.put(("download", url, proxy, save_path, format_id, download_subtitles, thread_count))
     
     def stop_download(self):
         """停止下载"""
         self.abort_all_tasks = True
-        if self.ydl_instance:
-            self.ydl_instance._download_retcode = -1  # 强制终止下载
         self.logger.info("停止下载")
-        self.is_downloading = False
     
     def update_progress(self, percent, message):
         """更新进度条和进度信息"""
@@ -423,28 +400,18 @@ class YouTubeDownloaderApp:
             try:
                 task = self.download_queue.get(timeout=1)
                 if task[0] == "download":
-                    self._download(task[1], task[2], task[3], task[4], task[5], task[6], task[7])
+                    self._download(task[1], task[2], task[3], task[4], task[5], task[6])
                 self.download_queue.task_done()
             except queue.Empty:
                 continue
             except Exception as e:
                 self.logger.error(f"处理队列时出错: {str(e)}")
     
-    def _download(self, url, proxy, save_path, format_id, download_subtitles, thread_count, merge_formats):
+    def _download(self, url, proxy, save_path, format_id, download_subtitles, thread_count):
         """实际执行下载的方法"""
-        self.is_downloading = True
         try:
-            # 检查是否需要合并格式
-            need_merge = '+' in format_id or merge_formats
-            
             # 检查是否需要提取音频
             is_audio = format_id.lower().startswith('audio') or format_id == 'bestaudio'
-            
-            # 检查ffmpeg
-            if (need_merge or is_audio) and not self.ffmpeg_path:
-                self.logger.error("需要FFmpeg来合并格式或提取音频，但未找到FFmpeg")
-                self.update_progress(0, "下载失败")
-                return
             
             # 设置yt-dlp选项
             ydl_opts = {
@@ -461,7 +428,6 @@ class YouTubeDownloaderApp:
                 'proxy': proxy,
                 'concurrent_fragments': thread_count,
                 'progress_hooks': [self._download_hook],
-                'ffmpeg_location': self.ffmpeg_path,
             }
             
             # 如果是音频下载，添加音频处理选项
@@ -472,35 +438,19 @@ class YouTubeDownloaderApp:
                     'preferredquality': '192',
                 }]
             
-            # 保存ydl实例用于终止下载
-            self.ydl_instance = yt_dlp.YoutubeDL(ydl_opts)
-            
             # 开始下载
-            info_dict = self.ydl_instance.extract_info(url, download=True)
-            
-            if self.abort_all_tasks:
-                self.logger.info("下载已取消")
-                self.update_progress(0, "下载已取消")
-                return
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info_dict = ydl.extract_info(url, download=True)
             
             self.logger.info(f"下载完成: {info_dict.get('title')}")
             self.update_progress(100, "下载完成")
             
-            # 保存下载历史
-            self.save_download_history(url, info_dict.get('title'), format_id, save_path)
-            
         except Exception as e:
             self.logger.error(f"下载失败: {str(e)}")
             self.update_progress(0, "下载失败")
-        finally:
-            self.is_downloading = False
-            self.ydl_instance = None
     
     def _download_hook(self, d):
         """下载进度回调函数"""
-        if self.abort_all_tasks:
-            return
-            
         if d['status'] == 'downloading':
             percent = d.get('_percent_str', '?')
             speed = d.get('_speed_str', '?')
@@ -528,74 +478,13 @@ class YouTubeDownloaderApp:
         """向日志区域添加消息"""
         self.log_text.config(state=tk.NORMAL)
         if level == "ERROR":
-            self.log_text.insert(tk.END, f"[错误] {message}\n", "ERROR")
+            self.log_text.insert(tk.END, f"[错误] {message}\n", "error")
         elif level == "INFO":
-            self.log_text.insert(tk.END, f"[信息] {message}\n", "INFO")
+            self.log_text.insert(tk.END, f"[信息] {message}\n", "info")
         elif level == "WARNING":
-            self.log_text.insert(tk.END, f"[警告] {message}\n", "WARNING")
-        elif level == "SUCCESS":
-            self.log_text.insert(tk.END, f"[成功] {message}\n", "SUCCESS")
+            self.log_text.insert(tk.END, f"[警告] {message}\n", "warning")
         self.log_text.config(state=tk.DISABLED)
         self.log_text.see(tk.END)
-    
-    def check_ffmpeg(self):
-        """检查FFmpeg是否可用"""
-        try:
-            # 检查系统路径中的FFmpeg
-            subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-            self.logger.info("找到系统安装的FFmpeg")
-            return "ffmpeg"
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            # 检查可执行文件所在目录
-            exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-            
-            # 根据平台确定FFmpeg二进制文件名
-            if platform.system() == "Windows":
-                ffmpeg_bin = "ffmpeg.exe"
-            else:
-                ffmpeg_bin = "ffmpeg"
-            
-            ffmpeg_path = os.path.join(exe_dir, ffmpeg_bin)
-            
-            if os.path.exists(ffmpeg_path) and os.access(ffmpeg_path, os.X_OK):
-                self.logger.info(f"找到打包的FFmpeg: {ffmpeg_path}")
-                return ffmpeg_path
-            
-            self.logger.warning("未找到FFmpeg。合并格式和提取音频功能将不可用。")
-            return None
-    
-    def save_download_history(self, url, title, format_id, save_path):
-        """保存下载历史"""
-        try:
-            history_file = os.path.join(os.path.expanduser("~"), ".yt_downloader_history.json")
-            
-            # 读取现有历史
-            if os.path.exists(history_file):
-                with open(history_file, 'r', encoding='utf-8') as f:
-                    history = json.load(f)
-            else:
-                history = []
-            
-            # 添加新记录
-            history.append({
-                "url": url,
-                "title": title,
-                "format_id": format_id,
-                "save_path": save_path,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            })
-            
-            # 只保留最近100条记录
-            if len(history) > 100:
-                history = history[-100:]
-            
-            # 保存历史
-            with open(history_file, 'w', encoding='utf-8') as f:
-                json.dump(history, f, ensure_ascii=False, indent=2)
-            
-            self.logger.info(f"已保存下载历史: {title}")
-        except Exception as e:
-            self.logger.error(f"保存下载历史失败: {str(e)}")
 
 def main():
     root = tk.Tk()
