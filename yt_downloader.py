@@ -117,7 +117,7 @@ class YouTubeDownloaderApp:
         ttk.Label(info_frame, textvariable=self.views_var).grid(row=0, column=2, sticky=tk.W, pady=2, padx=20)
         ttk.Label(info_frame, textvariable=self.uploader_var).grid(row=0, column=3, sticky=tk.W, pady=2, padx=20)
         
-       # 下载选项
+        # 下载选项
         options_frame = ttk.LabelFrame(main_frame, text="下载选项", padding=10)
         options_frame.pack(fill=tk.X, pady=5)
         
@@ -274,104 +274,6 @@ class YouTubeDownloaderApp:
         # 在单独线程中获取信息
         threading.Thread(target=_fetch, daemon=True).start()
     
-  def query_formats(self):
-        """查询视频格式"""
-        url = self.url_entry.get().strip()
-        proxy = self.proxy_entry.get().strip() or None
-        
-        if not self.validate_url(url):
-            messagebox.showerror("错误", "请输入有效的 YouTube 链接")
-            return
-            
-        self.logger.info(f"查询视频格式: {url}")
-        
-        # 清空下拉菜单
-        self.video_format_combobox.set("请先查询格式")
-        self.video_format_combobox.config(state="disabled")
-        self.audio_format_combobox.set("请先查询格式")
-        self.audio_format_combobox.config(state="disabled")
-        
-        self.available_video_formats = []
-        self.available_audio_formats = []
-        
-        def _query():
-            try:
-                ydl_opts = {
-                    'socket_timeout': 10,
-                    'proxy': proxy,
-                    'quiet': True
-                }
-                
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    self.logger.info("正在获取视频格式信息...")
-                    info_dict = ydl.extract_info(url, download=False)
-                    formats = info_dict.get('formats', [info_dict])
-                    
-                    # 筛选视频格式（720p到4320p）
-                    for f in formats:
-                        format_id = f['format_id']
-                        ext = f['ext']
-                        resolution = f.get('resolution', 'N/A')
-                        acodec = f.get('acodec', 'N/A')
-                        vcodec = f.get('vcodec', 'N/A')
-                        filesize = f.get('filesize', 'N/A')
-                        fps = f.get('fps', '?')
-                        
-                        # 提取分辨率中的数字部分
-                        resolution_num = 0
-                        if 'p' in resolution:
-                            try:
-                                resolution_num = int(resolution.replace('p', ''))
-                            except ValueError:
-                                pass
-                        
-                        # 筛选视频格式（720p到4320p，常见视频格式）
-                        if (ext in ['mp4', 'webm', 'mkv'] and 
-                            resolution != 'audio only' and
-                            720 <= resolution_num <= 4320):
-                            self.available_video_formats.append({
-                                'id': format_id,
-                                'ext': ext,
-                                'resolution': resolution,
-                                'acodec': acodec,
-                                'vcodec': vcodec,
-                                'filesize': filesize,
-                                'fps': fps
-                            })
-                        
-                        # 筛选音频格式
-                        if acodec != 'none' and vcodec == 'none':
-                            self.available_audio_formats.append({
-                                'id': format_id,
-                                'ext': ext,
-                                'acodec': acodec,
-                                'filesize': filesize
-                            })
-                    
-                    # 按分辨率排序视频格式（从高到低）
-                    self.available_video_formats.sort(
-                        key=lambda x: int(x['resolution'].replace('p', '')) if 'p' in x['resolution'] else 0,
-                        reverse=True
-                    )
-                    
-                    # 使用root.after确保在主线程中更新UI
-                    self.root.after(0, self._update_format_comboboxes)
-                    
-                    formats_info = f"\n可用视频格式 for: {info_dict.get('title')}\n"
-                    for f in self.available_video_formats:
-                        formats_info += f"ID: {f['id']}, 格式: {f['ext']}, 分辨率: {f['resolution']}, 帧率: {f['fps']}fps, 音频: {f['acodec']}, 视频: {f['vcodec']}, 大小: {f['filesize']}\n"
-                    
-                    formats_info += "\n可用音频格式:\n"
-                    for f in self.available_audio_formats:
-                        formats_info += f"ID: {f['id']}, 格式: {f['ext']}, 音频: {f['acodec']}, 大小: {f['filesize']}\n"
-                    
-                    self.result_queue.put(("info", formats_info))
-            except Exception as e:
-                self.result_queue.put(("error", f"查询格式失败: {str(e)}"))
-        
-        # 在单独线程中查询格式
-        threading.Thread(target=_query, daemon=True).start()
-    
     def query_formats(self):
         """查询视频格式"""
         url = self.url_entry.get().strip()
@@ -498,7 +400,7 @@ class YouTubeDownloaderApp:
             self.audio_format_combobox.current(0)  # 默认选择第一个
         else:
             self.audio_format_combobox["values"] = ["无可用音频格式"]
-            self.audio_format_combobox.config(state="disabled")   
+            self.audio_format_combobox.config(state="disabled")
     
     def start_download(self):
         """开始下载视频或音频"""
