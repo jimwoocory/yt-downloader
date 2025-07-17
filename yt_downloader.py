@@ -137,27 +137,27 @@ class YouTubeDownloaderApp:
         options_frame = ttk.LabelFrame(main_frame, text="下载选项", padding=10)
         options_frame.pack(fill=tk.X, pady=5)
 
-        # 自定义格式ID
-        ttk.Label(options_frame, text="自定义格式ID:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        # 第一行：自定义格式ID
+        ttk.Label(options_frame, text="自定义格式ID:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.format_id_var = tk.StringVar(value="bv*+ba/b")  # 默认使用最佳视频+最佳音频
-        ttk.Entry(options_frame, textvariable=self.format_id_var, width=40).grid(row=1, column=1, sticky=tk.W, pady=5, padx=5)
-        ttk.Button(options_frame, text="查询格式", command=self.query_formats).grid(row=1, column=2, padx=5)
+        ttk.Entry(options_frame, textvariable=self.format_id_var, width=40).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
+        ttk.Button(options_frame, text="查询格式", command=self.query_formats).grid(row=0, column=2, padx=5)
         
-        # 字幕选项
+        # 第二行：下载字幕
         self.subtitle_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(options_frame, text="下载字幕", variable=self.subtitle_var).grid(row=2, column=0, sticky=tk.W, pady=5)
+        ttk.Checkbutton(options_frame, text="下载字幕", variable=self.subtitle_var).grid(row=1, column=0, sticky=tk.W, pady=5)
 
+        # 第三行：多线程下载 和 下载后转码
         # 多线程下载
-        ttk.Label(options_frame, text="线程数:").grid(row=0, column=1, sticky=tk.W, pady=5)
+        ttk.Label(options_frame, text="线程数:").grid(row=2, column=0, sticky=tk.W, pady=5)
         self.threads_var = tk.StringVar(value="4")
-        ttk.Combobox(options_frame, textvariable=self.threads_var, values=["1", "2", "4", "8", "16"], width=5).grid(row=2, column=2, sticky=tk.W, pady=5, padx=5)
+        ttk.Combobox(options_frame, textvariable=self.threads_var, values=["1", "2", "4", "8", "16"], width=5).grid(row=2, column=1, sticky=tk.W, pady=5, padx=5)
         
-        # 转码选项
+        # 下载后转码
         self.transcode_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(options_frame, text="下载后转码", variable=self.transcode_var).grid(row=3, column=0, sticky=tk.W, pady=5)
-
+        ttk.Checkbutton(options_frame, text="下载后转码", variable=self.transcode_var).grid(row=2, column=2, sticky=tk.W, pady=5, padx=20)
         self.transcode_format = tk.StringVar(value="mp4")
-        ttk.Combobox(options_frame, textvariable=self.transcode_format, values=["mp4", "mkv", "avi", "mov", "webm"], width=10).grid(row=3, column=1, sticky=tk.W, pady=5, padx=5)
+        ttk.Combobox(options_frame, textvariable=self.transcode_format, values=["mp4", "mkv", "avi", "mov", "webm"], width=10).grid(row=2, column=3, sticky=tk.W, pady=5, padx=5)
         
         # 按钮
         button_frame = ttk.Frame(main_frame)
