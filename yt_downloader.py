@@ -140,7 +140,7 @@ class YouTubeDownloaderApp:
         # 第一行：自定义格式ID
         ttk.Label(options_frame, text="自定义格式ID:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.format_id_var = tk.StringVar(value="bv*+ba/b")  # 默认使用最佳视频+最佳音频
-        ttk.Entry(options_frame, textvariable=self.format_id_var, width=40).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
+        ttk.Entry(options_frame, textvariable=self.format_id_var, width=20).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
         ttk.Button(options_frame, text="查询格式", command=self.query_formats).grid(row=0, column=2, padx=5)
         
         # 第二行：下载字幕、线程数、下载后转码
