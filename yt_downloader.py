@@ -11,6 +11,9 @@ from datetime import datetime
 import json
 import subprocess
 import platform
+import tempfile
+import base64
+import stat
 
 class YouTubeDownloaderApp:
     def __init__(self, root):
@@ -43,6 +46,9 @@ class YouTubeDownloaderApp:
         # 配置日志
         self.setup_logging()
 
+        # 提取FFmpeg二进制
+        self.extract_ffmpeg_binaries()
+
         # 创建界面
         self.create_widgets()
         
@@ -60,6 +66,36 @@ class YouTubeDownloaderApp:
         self.ydl_instance = None
         self.is_downloading = False
         self.download_threads = {}  # 跟踪所有下载线程
+
+    def extract_ffmpeg_binaries(self):
+        """提取嵌入的FFmpeg二进制到临时目录"""
+        # 替换为实际的base64编码数据
+        # 如何生成: base64.b64encode(open('ffmpeg.exe', 'rb').read()).decode('utf-8')
+        ffmpeg_base64 = "YOUR_FFMPEG_BASE64_HERE"
+        ffprobe_base64 = "YOUR_FFPROBE_BASE64_HERE"
+        ffplay_base64 = "YOUR_FFPLAY_BASE64_HERE"
+
+        self.temp_dir = tempfile.mkdtemp()
+
+        # 提取ffmpeg
+        ffmpeg_path = os.path.join(self.temp_dir, 'ffmpeg.exe' if platform.system() == 'Windows' else 'ffmpeg')
+        with open(ffmpeg_path, 'wb') as f:
+            f.write(base64.b64decode(ffmpeg_base64))
+        os.chmod(ffmpeg_path, stat.S_IREAD | stat.S_IWRITE | stat.S_IXUSR)
+
+        # 提取ffprobe
+        ffprobe_path = os.path.join(self.temp_dir, 'ffprobe.exe' if platform.system() == 'Windows' else 'ffprobe')
+        with open(ffprobe_path, 'wb') as f:
+            f.write(base64.b64decode(ffprobe_base64))
+        os.chmod(ffprobe_path, stat.S_IREAD | stat.S_IWRITE | stat.S_IXUSR)
+
+        # 提取ffplay (可选)
+        ffplay_path = os.path.join(self.temp_dir, 'ffplay.exe' if platform.system() == 'Windows' else 'ffplay')
+        with open(ffplay_path, 'wb') as f:
+            f.write(base64.b64decode(ffplay_base64))
+        os.chmod(ffplay_path, stat.S_IREAD | stat.S_IWRITE | stat.S_IXUSR)
+
+        self.ffmpeg_path = ffmpeg_path
 
     def setup_logging(self):
         """配置日志系统，将日志输出到GUI"""
@@ -137,23 +173,27 @@ class YouTubeDownloaderApp:
         options_frame = ttk.LabelFrame(main_frame, text="下载选项", padding=10)
         options_frame.pack(fill=tk.X, pady=5)
 
-        # 第一行：自定义格式ID, 查询格式, 下载字幕, 线程数, 下载后转码
+        # 第一行：自定义格式ID
         ttk.Label(options_frame, text="自定义格式ID:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.format_id_var = tk.StringVar(value="bv*+ba/b")  # 默认使用最佳视频+最佳音频
         ttk.Entry(options_frame, textvariable=self.format_id_var, width=15).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
         ttk.Button(options_frame, text="查询格式", command=self.query_formats).grid(row=0, column=2, padx=5)
+        
+        # 第二行：下载字幕、线程数、下载后转码
+        sub_frame = ttk.Frame(options_frame)
+        sub_frame.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=5)
 
         self.subtitle_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(options_frame, text="下载字幕", variable=self.subtitle_var).grid(row=0, column=3, sticky=tk.W, pady=5, padx=5)
+        ttk.Checkbutton(sub_frame, text="下载字幕", variable=self.subtitle_var).pack(side=tk.LEFT, padx=(0, 5))
 
-        ttk.Label(options_frame, text="线程数:").grid(row=0, column=4, sticky=tk.W, pady=5)
+        ttk.Label(sub_frame, text="线程数:").pack(side=tk.LEFT, padx=(0, 5))
         self.threads_var = tk.StringVar(value="4")
-        ttk.Combobox(options_frame, textvariable=self.threads_var, values=["1", "2", "4", "8", "16"], width=5).grid(row=0, column=5, sticky=tk.W, pady=5, padx=5)
+        ttk.Combobox(sub_frame, textvariable=self.threads_var, values=["1", "2", "4", "8", "16"], width=5).pack(side=tk.LEFT, padx=(0, 5))
         
         self.transcode_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(options_frame, text="下载后转码", variable=self.transcode_var).grid(row=0, column=6, sticky=tk.W, pady=5, padx=5)
+        ttk.Checkbutton(sub_frame, text="下载后转码", variable=self.transcode_var).pack(side=tk.LEFT, padx=(0, 5))
         self.transcode_format = tk.StringVar(value="mp4")
-        ttk.Combobox(options_frame, textvariable=self.transcode_format, values=["mp4", "mkv", "avi", "mov", "webm"], width=10).grid(row=0, column=7, sticky=tk.W, pady=5, padx=5)
+        ttk.Combobox(sub_frame, textvariable=self.transcode_format, values=["mp4", "mkv", "avi", "mov", "webm"], width=10).pack(side=tk.LEFT, padx=(0, 5))
         
         # 按钮
         button_frame = ttk.Frame(main_frame)
@@ -467,6 +507,7 @@ class YouTubeDownloaderApp:
                 'writesubtitles': download_subtitles,
                 'writeautomaticsub': download_subtitles,
                 'subtitleslangs': ['en', 'zh-Hans', 'zh-Hant'],  # 下载多种语言字幕
+                'ffmpeg_location': self.ffmpeg_path  # 使用嵌入的FFmpeg
             }
 
             # 如果是音频下载，添加音频处理选项
@@ -742,7 +783,7 @@ class YouTubeDownloaderApp:
     def check_ffmpeg(self):
         """检查系统中是否安装了ffmpeg"""
         try:
-            subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run([self.ffmpeg_path, "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
             return True
         except (subprocess.SubprocessError, FileNotFoundError):
             return False
