@@ -69,11 +69,10 @@ class YouTubeDownloaderApp:
 
     def extract_ffmpeg_binaries(self):
         """提取嵌入的FFmpeg二进制到临时目录"""
-        # 替换为实际的base64编码数据
-        # 如何生成: base64.b64encode(open('ffmpeg.exe', 'rb').read()).decode('utf-8')
-        ffmpeg_base64 = "YOUR_FFMPEG_BASE64_HERE"
-        ffprobe_base64 = "YOUR_FFPROBE_BASE64_HERE"
-        ffplay_base64 = "YOUR_FFPLAY_BASE64_HERE"
+        # Replace these with your actual base64 strings generated from the binaries
+        ffmpeg_base64 = "YOUR_FFMPEG_BASE64_HERE"  # base64 for ffmpeg binary
+        ffprobe_base64 = "YOUR_FFPROBE_BASE64_HERE"  # base64 for ffprobe binary
+        ffplay_base64 = "YOUR_FFPLAY_BASE64_HERE"  # base64 for ffplay binary (optional if not needed)
 
         self.temp_dir = tempfile.mkdtemp()
 
@@ -507,7 +506,6 @@ class YouTubeDownloaderApp:
                 'writesubtitles': download_subtitles,
                 'writeautomaticsub': download_subtitles,
                 'subtitleslangs': ['en', 'zh-Hans', 'zh-Hant'],  # 下载多种语言字幕
-                'ffmpeg_location': self.ffmpeg_path  # 使用嵌入的FFmpeg
             }
 
             # 如果是音频下载，添加音频处理选项
