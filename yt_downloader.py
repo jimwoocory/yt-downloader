@@ -137,27 +137,24 @@ class YouTubeDownloaderApp:
         options_frame = ttk.LabelFrame(main_frame, text="下载选项", padding=10)
         options_frame.pack(fill=tk.X, pady=5)
 
-        # 第一行：自定义格式ID
+        # 第一行：自定义格式ID 和 查询格式
         ttk.Label(options_frame, text="自定义格式ID:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.format_id_var = tk.StringVar(value="bv*+ba/b")  # 默认使用最佳视频+最佳音频
         ttk.Entry(options_frame, textvariable=self.format_id_var, width=40).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
         ttk.Button(options_frame, text="查询格式", command=self.query_formats).grid(row=0, column=2, padx=5)
         
-        # 第二行：下载字幕
+        # 第二行：下载字幕、线程数、下载后转码
         self.subtitle_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(options_frame, text="下载字幕", variable=self.subtitle_var).grid(row=1, column=0, sticky=tk.W, pady=5)
 
-        # 第三行：多线程下载 和 下载后转码
-        # 多线程下载
-        ttk.Label(options_frame, text="线程数:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        ttk.Label(options_frame, text="线程数:").grid(row=1, column=1, sticky=tk.W, pady=5)
         self.threads_var = tk.StringVar(value="4")
-        ttk.Combobox(options_frame, textvariable=self.threads_var, values=["1", "2", "4", "8", "16"], width=5).grid(row=2, column=1, sticky=tk.W, pady=5, padx=5)
+        ttk.Combobox(options_frame, textvariable=self.threads_var, values=["1", "2", "4", "8", "16"], width=5).grid(row=1, column=2, sticky=tk.W, pady=5, padx=5)
         
-        # 下载后转码
         self.transcode_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(options_frame, text="下载后转码", variable=self.transcode_var).grid(row=2, column=2, sticky=tk.W, pady=5, padx=20)
+        ttk.Checkbutton(options_frame, text="下载后转码", variable=self.transcode_var).grid(row=1, column=3, sticky=tk.W, pady=5, padx=5)
         self.transcode_format = tk.StringVar(value="mp4")
-        ttk.Combobox(options_frame, textvariable=self.transcode_format, values=["mp4", "mkv", "avi", "mov", "webm"], width=10).grid(row=2, column=3, sticky=tk.W, pady=5, padx=5)
+        ttk.Combobox(options_frame, textvariable=self.transcode_format, values=["mp4", "mkv", "avi", "mov", "webm"], width=10).grid(row=1, column=4, sticky=tk.W, pady=5, padx=5)
         
         # 按钮
         button_frame = ttk.Frame(main_frame)
@@ -174,6 +171,9 @@ class YouTubeDownloaderApp:
 
         self.progress_label = ttk.Label(progress_frame, text="准备就绪")
         self.progress_label.pack(anchor=tk.W, pady=2)
+
+        self.progress_bar = ttk.Progressbar(progress_frame, orient='horizontal', mode='determinate', maximum=100)
+        self.progress_bar.pack(fill=tk.X, pady=5)
 
         # 信息窗口日志
         log_frame = ttk.LabelFrame(main_frame, text="信息窗口日志", padding=10)
@@ -395,7 +395,9 @@ class YouTubeDownloaderApp:
 
     def update_progress(self, percent, message):
         """更新进度条和进度信息"""
+        self.progress_bar['value'] = percent
         self.progress_label.config(text=message)
+        self.root.update_idletasks()
 
     def process_queue(self):
         """处理下载队列"""
