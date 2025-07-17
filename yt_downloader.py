@@ -34,22 +34,23 @@ class YouTubeDownloaderApp:
         self.light_color = "#ecf0f1"
         self.dark_color = "#1a252f"
         
-        # 配置ttk样式 - 修复background选项错误
+        # 配置ttk样式 - 修正background选项错误
+        # 注意：在ttk中设置背景颜色需要使用style.map而不是直接配置background
         self.style.configure('TFrame', background=self.light_color)
         self.style.configure('TLabelFrame', background=self.light_color)
-        self.style.configure('TLabel', background=self.light_color, foreground=self.primary_color)
+        self.style.configure('TLabel', foreground=self.primary_color)
+        self.style.configure('TCheckbutton', foreground=self.primary_color)
+        self.style.configure('TCombobox', foreground=self.primary_color)
         
-        # 配置按钮样式
-        self.style.configure('TButton', foreground="white", borderwidth=0)
+        # 配置按钮样式 - 使用style.map来设置状态相关的样式
+        self.style.configure('TButton', font=('SimHei', 10), foreground="white")
         self.style.map('TButton',
             background=[('active', '#2980b9'), ('!disabled', self.secondary_color)],
             foreground=[('active', 'white'), ('!disabled', 'white')]
         )
         
-        # 配置其他控件样式
-        self.style.configure('TCheckbutton', background=self.light_color, foreground=self.primary_color)
-        self.style.configure('TCombobox', background=self.light_color, foreground=self.primary_color)
-        self.style.configure('Horizontal.TProgressbar', background=self.secondary_color, troughcolor=self.light_color, bordercolor=self.light_color)
+        # 配置进度条样式
+        self.style.configure('Horizontal.TProgressbar', background=self.secondary_color, troughcolor=self.light_color)
         
         # 创建下载任务队列和结果队列
         self.download_queue = queue.Queue()
@@ -196,7 +197,6 @@ class YouTubeDownloaderApp:
         
         start_button = ttk.Button(button_frame, text="开始下载", command=self.start_download, width=15)
         start_button.pack(side=tk.LEFT, padx=5)
-        start_button.configure(style='Accent.TButton')
         
         stop_button = ttk.Button(button_frame, text="终止下载", command=self.stop_download, width=15)
         stop_button.pack(side=tk.LEFT, padx=5)
