@@ -448,7 +448,7 @@ class YouTubeDownloaderApp:
                 task = self.download_queue.get(timeout=1)
                 if task[0] == "download":
                     self.current_task_index += 1
-                    self.update_progress(
+                    self.update_progress(percentage)
                         (self.current_task_index-1) / self.total_tasks * 100, 
                         f"准备下载 {self.current_task_index}/{self.total_tasks}"
                     )
