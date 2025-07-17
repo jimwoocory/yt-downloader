@@ -27,8 +27,6 @@ class YouTubeDownloaderApp:
         self.style.configure('TCombobox', font=('SimHei', 10))
 
         # 初始化变量
-        self.available_video_formats = []
-        self.available_audio_formats = []
         # 创建下载任务队列和结果队列
         self.download_queue = queue.Queue()
         self.result_queue = queue.Queue()
@@ -121,33 +119,6 @@ class YouTubeDownloaderApp:
         ttk.Entry(path_frame, textvariable=self.save_path_var, width=50).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
         ttk.Button(path_frame, text="浏览", command=self.browse_save_path).grid(row=0, column=2, padx=5)
         
-        # 视频格式选择
-        format_frame = ttk.LabelFrame(main_frame, text="下载格式", padding=10)
-        format_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(format_frame, text="视频格式:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.video_format_var = tk.StringVar()
-        self.video_format_combobox = ttk.Combobox(format_frame, textvariable=self.video_format_var, width=30)
-        self.video_format_combobox.grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
-        self.video_format_combobox.set("请先查询格式")
-        self.video_format_combobox.config(state="disabled")
-        
-        # 音频格式选择
-        ttk.Label(format_frame, text="音频格式:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.audio_format_var = tk.StringVar()
-        self.audio_format_combobox = ttk.Combobox(format_frame, textvariable=self.audio_format_var, width=30)
-        self.audio_format_combobox.grid(row=1, column=1, sticky=tk.W, pady=5, padx=5)
-        self.audio_format_combobox.set("请先查询格式")
-        self.audio_format_combobox.config(state="disabled")
-        
-        # 自定义格式下载
-        custom_format_frame = ttk.Frame(format_frame)
-        custom_format_frame.grid(row=1, column=2, sticky=tk.W, pady=5, padx=5)
-        
-        ttk.Label(custom_format_frame, text="自定义格式:").pack(side=tk.LEFT, padx=(0, 5))
-        self.custom_format_var = tk.StringVar()
-        ttk.Entry(custom_format_frame, textvariable=self.custom_format_var, width=10).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(custom_format_frame, text="下载", command=self.download_custom_format).pack(side=tk.LEFT)
         # 视频信息预览
         info_frame = ttk.LabelFrame(main_frame, text="视频信息预览", padding=10)
         info_frame.pack(fill=tk.X, pady=5)
@@ -162,7 +133,7 @@ class YouTubeDownloaderApp:
         ttk.Label(info_frame, textvariable=self.views_var).grid(row=0, column=2, sticky=tk.W, pady=2, padx=20)
         ttk.Label(info_frame, textvariable=self.uploader_var).grid(row=0, column=3, sticky=tk.W, pady=2, padx=20)
 
-        # 下载选项
+        # 下载选项（合并下载格式和下载选项）
         options_frame = ttk.LabelFrame(main_frame, text="下载选项", padding=10)
         options_frame.pack(fill=tk.X, pady=5)
 
@@ -352,36 +323,6 @@ class YouTubeDownloaderApp:
         # 在单独线程中查询格式
         threading.Thread(target=_query, daemon=True).start()
 
-    def download_custom_format(self):
-        """下载自定义格式的视频或音频"""
-        url = self.url_entry.get().strip()
-        proxy = self.proxy_entry.get().strip() or None
-        save_path = self.save_path_var.get()
-        custom_format_id = self.custom_format_var.get().strip()
-        download_subtitles = self.subtitle_var.get()
-        thread_count = int(self.threads_var.get())
-
-        if not self.validate_url(url):
-            messagebox.showerror("错误", "请输入有效的 YouTube 链接")
-            return
-
-        if not custom_format_id:
-            messagebox.showerror("错误", "请输入格式ID")
-            return
-            
-        self.logger.info(f"开始下载自定义格式: {custom_format_id}")
-
-        # 准备下载任务
-        self.download_tasks = [url]
-        self.current_task_index = 0
-        self.total_tasks = 1
-        self.abort_all_tasks = False
-        self.update_progress(0, "准备下载...")
-
-        # 创建下载队列
-        self.download_queue = queue.Queue()
-        self.download_queue.put(("download", url, proxy, save_path, custom_format_id, download_subtitles, thread_count))
-    
     def start_download(self):
         """开始下载视频或音频"""
         urls = []
