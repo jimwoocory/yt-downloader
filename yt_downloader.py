@@ -1,4 +1,5 @@
 import yt_dlp
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext, filedialog
 import threading
@@ -58,23 +59,12 @@ class YouTubeDownloaderApp:
         self.is_downloading = False
         self.download_threads = {}
 
-        # 设置光标默认焦点在URL输入框末尾
-        self.root.after(100, self.set_url_focus)
-
-    def set_url_focus(self):
-        self.url_entry.focus_set()
-        self.url_entry.icursor(tk.END)
+        # Set focus to URL entry after splash
+        self.root.after(100, self.url_entry.focus_set)
 
     def setup_logging(self):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
-
-        # 添加文件日志处理器
-        file_handler = logging.FileHandler('app.log')
-        file_handler.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        file_handler.setFormatter(formatter)
-        self.logger.addHandler(file_handler)
 
         class QueueHandler(logging.Handler):
             def __init__(self, log_queue):
@@ -86,8 +76,14 @@ class YouTubeDownloaderApp:
         
         self.result_queue = queue.Queue()
         self.log_handler = QueueHandler(self.result_queue)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         self.log_handler.setFormatter(formatter)
         self.logger.addHandler(self.log_handler)
+
+        # Add file logger
+        file_handler = logging.FileHandler('yt_downloader.log')
+        file_handler.setFormatter(formatter)
+        self.logger.addHandler(file_handler)
 
     def create_widgets(self):
         main_frame = ttk.Frame(self.root, padding=10)
@@ -288,24 +284,36 @@ class YouTubeDownloaderApp:
 
                     self.result_queue.put(("info", formats_info))
 
-                    # 推荐格式ID
+                    # 推荐格式ID: 优先选择filesize not None的最高质量
                     best_video = None
                     best_audio = None
+                    fallback_video = None
+                    fallback_audio = None
 
                     for f in formats:
-                        # 查找最佳视频格式
-                        if (f.get('vcodec', 'none') != 'none' and 
-                            f.get('acodec', 'none') == 'none' and 
-                            (best_video is None or int(f.get('height', 0)) > int(best_video.get('height', 0)))):
-                            best_video = f
+                        # 视频
+                        if f.get('vcodec') != 'none' and f.get('acodec') == 'none':
+                            height = int(f.get('height', 0))
+                            if f.get('filesize') is not None:
+                                if best_video is None or height > int(best_video.get('height', 0)):
+                                    best_video = f
+                            else:
+                                if fallback_video is None or height > int(fallback_video.get('height', 0)):
+                                    fallback_video = f
 
-                        # 查找最佳音频格式
-                        if (f.get('acodec', 'none') != 'none' and 
-                            f.get('vcodec', 'none') == 'none' and 
-                            (best_audio is None or int(f.get('abr', 0)) > int(best_audio.get('abr', 0)))):
-                            best_audio = f
+                        # 音频
+                        if f.get('acodec') != 'none' and f.get('vcodec') == 'none':
+                            abr = int(f.get('abr', 0))
+                            if f.get('filesize') is not None:
+                                if best_audio is None or abr > int(best_audio.get('abr', 0)):
+                                    best_audio = f
+                            else:
+                                if fallback_audio is None or abr > int(fallback_audio.get('abr', 0)):
+                                    fallback_audio = f
 
-                    # 默认最佳画质+最佳音质，避开N/A
+                    best_video = best_video or fallback_video
+                    best_audio = best_audio or fallback_audio
+
                     if best_video and best_audio:
                         recommended_format = f"{best_video['format_id']}+{best_audio['format_id']}"
                         self.root.after(0, lambda: self.format_id_var.set(recommended_format))
@@ -367,20 +375,20 @@ class YouTubeDownloaderApp:
         if not self.is_downloading:
             messagebox.showinfo("提示", "当前没有正在进行的下载")
             return
-
+            
         self.abort_all_tasks = True
         self.logger.info("正在终止所有下载任务...")
-
+        
         # 终止当前下载
         if self.ydl_instance:
             self.ydl_instance._download_retcode = -1  # 设置退出码强制终止
-
+        
         # 等待所有线程结束
         for task_id, thread in list(self.download_threads.items()):
             if thread.is_alive():
                 self.logger.info(f"等待任务 {task_id} 终止...")
                 thread.join(timeout=1.0)
-
+        
         self.is_downloading = False
         self.ydl_instance = None
         self.download_threads = {}
@@ -403,7 +411,7 @@ class YouTubeDownloaderApp:
                         self.download_queue.get()
                         self.download_queue.task_done()
                     continue
-
+                
                 task = self.download_queue.get(timeout=1)
                 if task[0] == "download":
                     self.current_task_index += 1
@@ -411,7 +419,7 @@ class YouTubeDownloaderApp:
                         (self.current_task_index-1) / self.total_tasks * 100, 
                         f"准备下载 {self.current_task_index}/{self.total_tasks}"
                     )
-
+                    
                     # 为每个下载任务创建唯一ID
                     task_id = f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
@@ -432,7 +440,7 @@ class YouTubeDownloaderApp:
     def _download(self, task_id, url, proxy, save_path, format_id, download_subtitles, thread_count, transcode, transcode_format):
         """下载视频或音频的实际处理函数"""
         self.is_downloading = True
-
+        
         try:
             # 检查是否需要提取音频
             is_audio = format_id.lower().startswith('audio') or format_id == 'bestaudio'
@@ -484,15 +492,6 @@ class YouTubeDownloaderApp:
             self.ydl_instance = yt_dlp.YoutubeDL(ydl_opts)
 
             # 开始下载
-            info_dict = self.ydl_instance.extract_info(url, download=False)
-
-            # 检查文件是否存在，避免覆盖
-            filename = ydl_opts['outtmpl'] % info_dict
-            if os.path.exists(filename):
-                filename = f"{os.path.splitext(filename)[0]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{os.path.splitext(filename)[1]}"
-                ydl_opts['outtmpl'] = filename
-                self.ydl_instance = yt_dlp.YoutubeDL(ydl_opts)  # 更新outtmpl
-
             info_dict = self.ydl_instance.extract_info(url, download=True)
 
             if self.abort_all_tasks:
