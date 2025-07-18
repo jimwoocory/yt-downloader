@@ -60,9 +60,11 @@ class YouTubeDownloaderApp:
         self.download_threads = {}
 
     def setup_logging(self):
+        """配置日志系统，将日志输出到GUI"""
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
 
+        # 创建日志队列处理器
         class QueueHandler(logging.Handler):
             def __init__(self, log_queue):
                 super().__init__()
@@ -71,16 +73,21 @@ class YouTubeDownloaderApp:
             def emit(self, record):
                 self.log_queue.put((record.levelname, self.format(record)))
         
+        # 创建日志队列
         self.result_queue = queue.Queue()
+        # 创建日志处理器，将日志输出到GUI
         self.log_handler = QueueHandler(self.result_queue)
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         self.log_handler.setFormatter(formatter)
         self.logger.addHandler(self.log_handler)
 
     def create_widgets(self):
+        """创建GUI界面组件"""
+        # 创建主框架
         main_frame = ttk.Frame(self.root, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
+        # URL和代理设置
         url_frame = ttk.LabelFrame(main_frame, text="视频信息", padding=10)
         url_frame.pack(fill=tk.X, pady=5)
 
@@ -91,6 +98,7 @@ class YouTubeDownloaderApp:
 
         ttk.Button(url_frame, text="获取信息", command=self.fetch_video_info).grid(row=0, column=2, padx=5, rowspan=2, sticky=tk.NS)
 
+        # 批量下载支持
         ttk.Label(url_frame, text="或批量输入URLs (每行一个):").grid(row=1, column=0, sticky=tk.W, pady=5)
         self.urls_text = scrolledtext.ScrolledText(url_frame, wrap=tk.WORD, height=3)
         self.urls_text.grid(row=1, column=1, sticky=tk.W, pady=5, padx=5)
@@ -100,47 +108,62 @@ class YouTubeDownloaderApp:
         self.proxy_entry.grid(row=2, column=1, sticky=tk.W, pady=5, padx=5)
         self.proxy_entry.insert(0, "http://127.0.0.1:7897")
 
+        # 保存路径
         path_frame = ttk.LabelFrame(main_frame, text="保存路径", padding=10)
         path_frame.pack(fill=tk.X, pady=5)
-
+        
         ttk.Label(path_frame, text="路径:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.save_path_var = tk.StringVar(value=os.getcwd())
         ttk.Entry(path_frame, textvariable=self.save_path_var, width=50).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
         ttk.Button(path_frame, text="浏览", command=self.browse_save_path).grid(row=0, column=2, padx=5)
-
+        
+        # 视频信息预览
         info_frame = ttk.LabelFrame(main_frame, text="视频信息预览", padding=10)
         info_frame.pack(fill=tk.X, pady=5)
-
+        
         self.title_var = tk.StringVar(value="标题: ")
         self.duration_var = tk.StringVar(value="时长: ")
         self.views_var = tk.StringVar(value="观看次数: ")
         self.uploader_var = tk.StringVar(value="上传者: ")
-
+        
         ttk.Label(info_frame, textvariable=self.title_var).grid(row=0, column=0, sticky=tk.W, pady=2)
         ttk.Label(info_frame, textvariable=self.duration_var).grid(row=0, column=1, sticky=tk.W, pady=2, padx=20)
         ttk.Label(info_frame, textvariable=self.views_var).grid(row=0, column=2, sticky=tk.W, pady=2, padx=20)
         ttk.Label(info_frame, textvariable=self.uploader_var).grid(row=0, column=3, sticky=tk.W, pady=2, padx=20)
 
+        # 下载选项（合并下载格式和下载选项）
         options_frame = ttk.LabelFrame(main_frame, text="下载选项", padding=10)
         options_frame.pack(fill=tk.X, pady=5)
 
+        # 第一行：自定义格式ID
+        # 第一行：自定义格式ID, 查询格式, 下载字幕, 线程数, 下载后转码
         ttk.Label(options_frame, text="自定义格式ID:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.format_id_var = tk.StringVar(value="bv*+ba/b")
+        self.format_id_var = tk.StringVar(value="bv*+ba/b")  # 默认使用最佳视频+最佳音频
         ttk.Entry(options_frame, textvariable=self.format_id_var, width=15).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
         ttk.Button(options_frame, text="查询格式", command=self.query_formats).grid(row=0, column=2, padx=5)
+        
+        # 第二行：下载字幕、线程数、下载后转码
+        sub_frame = ttk.Frame(options_frame)
+        sub_frame.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=5)
 
         self.subtitle_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(sub_frame, text="下载字幕", variable=self.subtitle_var).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Checkbutton(options_frame, text="下载字幕", variable=self.subtitle_var).grid(row=0, column=3, sticky=tk.W, pady=5, padx=5)
 
+        ttk.Label(sub_frame, text="线程数:").pack(side=tk.LEFT, padx=(0, 5))
         ttk.Label(options_frame, text="线程数:").grid(row=0, column=4, sticky=tk.W, pady=5)
         self.threads_var = tk.StringVar(value="4")
+        ttk.Combobox(sub_frame, textvariable=self.threads_var, values=["1", "2", "4", "8", "16"], width=5).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Combobox(options_frame, textvariable=self.threads_var, values=["1", "2", "4", "8", "16"], width=5).grid(row=0, column=5, sticky=tk.W, pady=5, padx=5)
 
         self.transcode_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(sub_frame, text="下载后转码", variable=self.transcode_var).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Checkbutton(options_frame, text="下载后转码", variable=self.transcode_var).grid(row=0, column=6, sticky=tk.W, pady=5, padx=5)
         self.transcode_format = tk.StringVar(value="mp4")
+        ttk.Combobox(sub_frame, textvariable=self.transcode_format, values=["mp4", "mkv", "avi", "mov", "webm"], width=10).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Combobox(options_frame, textvariable=self.transcode_format, values=["mp4", "mkv", "avi", "mov", "webm"], width=10).grid(row=0, column=7, sticky=tk.W, pady=5, padx=5)
 
+        # 按钮
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=10)
 
@@ -149,6 +172,7 @@ class YouTubeDownloaderApp:
         ttk.Button(button_frame, text="清空日志", command=self.clear_logs, width=15).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="查看历史", command=self.show_history, width=15).pack(side=tk.LEFT, padx=5)
 
+        # 下载进度条
         progress_frame = ttk.LabelFrame(main_frame, text="下载进度", padding=10)
         progress_frame.pack(fill=tk.X, pady=5)
 
@@ -158,6 +182,7 @@ class YouTubeDownloaderApp:
         self.progress_bar = ttk.Progressbar(progress_frame, orient='horizontal', mode='determinate', maximum=100)
         self.progress_bar.pack(fill=tk.X, pady=5)
 
+        # 信息窗口日志
         log_frame = ttk.LabelFrame(main_frame, text="信息窗口日志", padding=10)
         log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
@@ -276,28 +301,26 @@ class YouTubeDownloaderApp:
 
                     self.result_queue.put(("info", formats_info))
 
-                    # 推荐格式ID：优先选择有大小的最高质量，避免N/A
+                    # 推荐格式ID
                     best_video = None
                     best_audio = None
 
                     for f in formats:
-                        # 视频格式
-                        if f.get('vcodec') != 'none' and f.get('acodec') == 'none':
-                            height = f.get('height')
-                            if height is not None:
-                                height = int(height)
-                                if f.get('filesize') is not None:
-                                    if best_video is None or height > int(best_video.get('height', 0)):
-                                        best_video = f
+                        # 查找最佳视频格式
+                        height = f.get('height')
+                        if height is not None:
+                            if (f.get('vcodec', 'none') != 'none' and 
+                                f.get('acodec', 'none') == 'none' and 
+                                (best_video is None or height > best_video.get('height', 0))):
+                                best_video = f
 
-                        # 音频格式
-                        if f.get('acodec') != 'none' and f.get('vcodec') == 'none':
-                            abr = f.get('abr')
-                            if abr is not None:
-                                abr = int(abr)
-                                if f.get('filesize') is not None:
-                                    if best_audio is None or abr > int(best_audio.get('abr', 0)):
-                                        best_audio = f
+                        # 查找最佳音频格式
+                        abr = f.get('abr')
+                        if abr is not None:
+                            if (f.get('acodec', 'none') != 'none' and 
+                                f.get('vcodec', 'none') == 'none' and 
+                                (best_audio is None or abr > best_audio.get('abr', 0))):
+                                best_audio = f
 
                     if best_video and best_audio:
                         recommended_format = f"{best_video['format_id']}+{best_audio['format_id']}"
@@ -762,7 +785,9 @@ def show_splash_screen(root):
         progress.stop()
         splash.destroy()
         root.deiconify()
-        root.focus_force()  # 强制焦点到主窗口
+        # Set focus after splash closes
+        root.after(100, lambda: self.url_entry.focus_set())
+        root.after(100, lambda: self.url_entry.icursor(tk.END))
 
     root.after(3000, close_splash)
 
