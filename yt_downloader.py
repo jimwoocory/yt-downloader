@@ -59,9 +59,6 @@ class YouTubeDownloaderApp:
         self.is_downloading = False
         self.download_threads = {}
 
-        # Set focus to URL entry after splash
-        self.root.after(100, self.url_entry.focus_set)
-
     def setup_logging(self):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
@@ -79,11 +76,6 @@ class YouTubeDownloaderApp:
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         self.log_handler.setFormatter(formatter)
         self.logger.addHandler(self.log_handler)
-
-        # Add file logger
-        file_handler = logging.FileHandler('yt_downloader.log')
-        file_handler.setFormatter(formatter)
-        self.logger.addHandler(file_handler)
 
     def create_widgets(self):
         main_frame = ttk.Frame(self.root, padding=10)
@@ -112,7 +104,7 @@ class YouTubeDownloaderApp:
         path_frame.pack(fill=tk.X, pady=5)
 
         ttk.Label(path_frame, text="路径:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.save_path_var = tk.StringVar(value="D:/360MoveData/")
+        self.save_path_var = tk.StringVar(value=os.getcwd())
         ttk.Entry(path_frame, textvariable=self.save_path_var, width=50).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
         ttk.Button(path_frame, text="浏览", command=self.browse_save_path).grid(row=0, column=2, padx=5)
 
@@ -284,35 +276,28 @@ class YouTubeDownloaderApp:
 
                     self.result_queue.put(("info", formats_info))
 
-                    # 推荐格式ID: 优先选择filesize not None的最高质量
+                    # 推荐格式ID：优先选择有大小的最高质量，避免N/A
                     best_video = None
                     best_audio = None
-                    fallback_video = None
-                    fallback_audio = None
 
                     for f in formats:
-                        # 视频
+                        # 视频格式
                         if f.get('vcodec') != 'none' and f.get('acodec') == 'none':
-                            height = int(f.get('height', 0))
-                            if f.get('filesize') is not None:
-                                if best_video is None or height > int(best_video.get('height', 0)):
-                                    best_video = f
-                            else:
-                                if fallback_video is None or height > int(fallback_video.get('height', 0)):
-                                    fallback_video = f
+                            height = f.get('height')
+                            if height is not None:
+                                height = int(height)
+                                if f.get('filesize') is not None:
+                                    if best_video is None or height > int(best_video.get('height', 0)):
+                                        best_video = f
 
-                        # 音频
+                        # 音频格式
                         if f.get('acodec') != 'none' and f.get('vcodec') == 'none':
-                            abr = int(f.get('abr', 0))
-                            if f.get('filesize') is not None:
-                                if best_audio is None or abr > int(best_audio.get('abr', 0)):
-                                    best_audio = f
-                            else:
-                                if fallback_audio is None or abr > int(fallback_audio.get('abr', 0)):
-                                    fallback_audio = f
-
-                    best_video = best_video or fallback_video
-                    best_audio = best_audio or fallback_audio
+                            abr = f.get('abr')
+                            if abr is not None:
+                                abr = int(abr)
+                                if f.get('filesize') is not None:
+                                    if best_audio is None or abr > int(best_audio.get('abr', 0)):
+                                        best_audio = f
 
                     if best_video and best_audio:
                         recommended_format = f"{best_video['format_id']}+{best_audio['format_id']}"
@@ -777,6 +762,7 @@ def show_splash_screen(root):
         progress.stop()
         splash.destroy()
         root.deiconify()
+        root.focus_force()  # 强制焦点到主窗口
 
     root.after(3000, close_splash)
 
