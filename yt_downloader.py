@@ -148,21 +148,16 @@ class YouTubeDownloaderApp:
 
         self.subtitle_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(sub_frame, text="下载字幕", variable=self.subtitle_var).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Checkbutton(options_frame, text="下载字幕", variable=self.subtitle_var).grid(row=0, column=3, sticky=tk.W, pady=5, padx=5)
 
         ttk.Label(sub_frame, text="线程数:").pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Label(options_frame, text="线程数:").grid(row=0, column=4, sticky=tk.W, pady=5)
         self.threads_var = tk.StringVar(value="4")
         ttk.Combobox(sub_frame, textvariable=self.threads_var, values=["1", "2", "4", "8", "16"], width=5).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Combobox(options_frame, textvariable=self.threads_var, values=["1", "2", "4", "8", "16"], width=5).grid(row=0, column=5, sticky=tk.W, pady=5, padx=5)
 
         self.transcode_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(sub_frame, text="下载后转码", variable=self.transcode_var).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Checkbutton(options_frame, text="下载后转码", variable=self.transcode_var).grid(row=0, column=6, sticky=tk.W, pady=5, padx=5)
         self.transcode_format = tk.StringVar(value="mp4")
         ttk.Combobox(sub_frame, textvariable=self.transcode_format, values=["mp4", "mkv", "avi", "mov", "webm"], width=10).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Combobox(options_frame, textvariable=self.transcode_format, values=["mp4", "mkv", "avi", "mov", "webm"], width=10).grid(row=0, column=7, sticky=tk.W, pady=5, padx=5)
-
+       
         # 按钮
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=10)
