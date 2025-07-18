@@ -11,6 +11,9 @@ from datetime import datetime
 import json
 import subprocess
 import platform
+import matplotlib.pyplot as plt
+import numpy as np
+from PIL import Image
 
 class YouTubeDownloaderApp:
     def __init__(self, root):
@@ -752,6 +755,51 @@ class YouTubeDownloaderApp:
             return True
         except (subprocess.SubprocessError, FileNotFoundError):
             return False
+def draw_frame(stage):
+    fig, ax = plt.subplots(figsize=(3, 3))
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 10)
+    ax.axis('off')
+
+    if stage == 0:
+        # 彩色3x3格子
+        colors = ['#F8B400', '#00C9A7', '#FF6363', '#00B8D4', '#E8EAF6', '#FFA726', '#FF7043', '#4DB6AC', '#29B6F6']
+        idx = 0
+        for i in range(3):
+            for j in range(3):
+                ax.add_patch(plt.Rectangle((1 + j*2, 6 - i*2), 1.5, 1.5, color=colors[idx]))
+                idx += 1
+
+    elif stage == 1:
+        # 蓝色菱形
+        ax.fill([[5, 7, 5, 3]], [[3, 5, 7, 5]], color='#00BCD4')
+
+    elif stage == 2:
+        # 黄色方块
+        ax.add_patch(plt.Rectangle((3, 3), 4, 4, color='#FBC02D'))
+
+    elif stage == 3:
+        # 黄色3x3方格
+        for i in range(3):
+            for j in range(3):
+                ax.add_patch(plt.Rectangle((3 + j*1, 6 - i*1), 0.8, 0.8, color='#FFB300'))
+
+    elif stage == 4:
+        # 小点
+        ax.plot(5, 5, 's', markersize=6, color='#263238')
+
+    fig.canvas.draw()
+    image = np.frombuffer(fig.canvas.tostring_rgb(), dtype='uint8')
+    image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    plt.close(fig)
+    return Image.fromarray(image)
+
+# 生成帧并保存成GIF
+frames = []
+for i in range(5):
+    frames.append(draw_frame(i))
+
+frames[0].save("loading_custom.gif", save_all=True, append_images=frames[1:], duration=300, loop=0)            
 
 def show_splash_screen(root):
     splash = tk.Toplevel(root)
