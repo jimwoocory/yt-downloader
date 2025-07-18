@@ -1,4 +1,5 @@
 import yt_dlp
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext, filedialog
 import threading
@@ -10,7 +11,6 @@ from datetime import datetime
 import json
 import subprocess
 import platform
-from pathlib import Path
 
 class YouTubeDownloaderApp:
     def __init__(self, root):
@@ -28,10 +28,10 @@ class YouTubeDownloaderApp:
 
         # 设置中文字体支持
         self.style = ttk.Style()
-        self.style.configure('TLabel', font=('SimHei', 10))
-        self.style.configure('TButton', font=('SimHei', 10))
-        self.style.configure('TEntry', font=('SimHei', 10))
-        self.style.configure('TCombobox', font=('SimHei', 10))
+        self.style.configure('TLabel', font=('Arial', 10))
+        self.style.configure('TButton', font=('Arial', 10))
+        self.style.configure('TEntry', font=('Arial', 10))
+        self.style.configure('TCombobox', font=('Arial', 10))
 
         # 初始化变量
         self.download_queue = queue.Queue()
@@ -43,15 +43,6 @@ class YouTubeDownloaderApp:
         self.abort_all_tasks = False
 
         self.video_info = {}
-
-        # 默认下载路径
-        default_download_path = str(Path.home() / 'Downloads')
-        self.save_path_var = tk.StringVar(value=default_download_path)
-
-        # 历史记录路径
-        app_data_dir = os.path.join(os.path.expanduser('~'), '.yt_downloader')
-        os.makedirs(app_data_dir, exist_ok=True)
-        self.history_path = os.path.join(app_data_dir, 'history.json')
 
         self.setup_logging()
 
@@ -67,10 +58,6 @@ class YouTubeDownloaderApp:
         self.ydl_instance = None
         self.is_downloading = False
         self.download_threads = {}
-
-        # 预检查ffmpeg
-        if not self.check_ffmpeg():
-            messagebox.showwarning("警告", "未找到ffmpeg。转码和某些下载功能可能不可用。请安装ffmpeg并添加到PATH。")
 
     def setup_logging(self):
         self.logger = logging.getLogger(__name__)
@@ -113,10 +100,12 @@ class YouTubeDownloaderApp:
         self.proxy_entry.grid(row=2, column=1, sticky=tk.W, pady=5, padx=5)
         self.proxy_entry.insert(0, "http://127.0.0.1:7897")
 
+        # 保存路径
         path_frame = ttk.LabelFrame(main_frame, text="保存路径", padding=10)
         path_frame.pack(fill=tk.X, pady=5)
 
         ttk.Label(path_frame, text="路径:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.save_path_var = tk.StringVar(value="D:/360MoveData/")
         ttk.Entry(path_frame, textvariable=self.save_path_var, width=50).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
         ttk.Button(path_frame, text="浏览", command=self.browse_save_path).grid(row=0, column=2, padx=5)
 
@@ -153,11 +142,6 @@ class YouTubeDownloaderApp:
         self.transcode_format = tk.StringVar(value="mp4")
         ttk.Combobox(options_frame, textvariable=self.transcode_format, values=["mp4", "mkv", "avi", "mov", "webm"], width=10).grid(row=0, column=7, sticky=tk.W, pady=5, padx=5)
 
-        # 添加下载速度限制
-        ttk.Label(options_frame, text="速度限制 (KB/s):").grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.rate_limit_var = tk.StringVar(value="0")  # 0 for no limit
-        ttk.Entry(options_frame, textvariable=self.rate_limit_var, width=10).grid(row=1, column=1, sticky=tk.W, pady=5, padx=5)
-
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=10)
 
@@ -193,8 +177,11 @@ class YouTubeDownloaderApp:
             self.save_path_var.set(path)
 
     def validate_url(self, url):
-        parsed = urlparse(url)
-        return parsed.netloc.endswith(('youtube.com', 'youtu.be'))
+        try:
+            parsed = urlparse(url)
+            return all([parsed.scheme, parsed.netloc, parsed.path])
+        except ValueError:
+            return False
 
     def fetch_video_info(self):
         url = self.url_entry.get().strip()
@@ -268,7 +255,7 @@ class YouTubeDownloaderApp:
                     info_dict = ydl.extract_info(url, download=False)
                     formats = info_dict.get('formats', [info_dict])
 
-                    # 简化格式信息
+                    # 简化格式信息，只显示关键字段
                     formats_info = f"\n[格式查询] 可用格式 for: {info_dict.get('title')}\n"
                     for f in formats:
                         format_id = f['format_id']
@@ -333,10 +320,6 @@ class YouTubeDownloaderApp:
         if not format_id:
             messagebox.showerror("错误", "请输入有效的格式ID")
             return
-
-        # 检查保存路径是否存在
-        if not os.path.exists(save_path):
-            os.makedirs(save_path, exist_ok=True)
 
         self.download_tasks = urls.copy()
         self.current_task_index = 0
@@ -437,8 +420,6 @@ class YouTubeDownloaderApp:
                 'writesubtitles': download_subtitles,
                 'writeautomaticsub': download_subtitles,
                 'subtitleslangs': ['en', 'zh-Hans', 'zh-Hant'],
-                'nooverwrites': True,  # 避免覆盖文件
-                'ratelimit': int(self.rate_limit_var.get()) * 1024 if int(self.rate_limit_var.get()) > 0 else None  # KB/s to bytes/s
             }
 
             if is_audio:
@@ -473,8 +454,8 @@ class YouTubeDownloaderApp:
 
             self.save_download_history(url, info_dict.get('title'), format_id, save_path)
 
-            # 下载完成弹窗
-            if messagebox.askyesno("[提示] 下载完成", f"是否打开文件夹浏览 {info_dict.get('title')}？"):
+            # 下载完成弹窗提示打开文件夹
+            if messagebox.askyesno("[提示] 下载完成", f"是否打开下载文件夹浏览 {info_dict.get('title')}？"):
                 self.open_folder(save_path)
 
             if transcode:
@@ -484,12 +465,16 @@ class YouTubeDownloaderApp:
                 self.result_queue.put(("info", f"[转码] 开始: {original_file} -> {transcoded_file}"))
                 self.transcode_file(original_file, transcoded_file)
 
-        except yt_dlp.utils.DownloadError as e:
-            self.result_queue.put(("error", f"[网络错误] 下载失败: {str(e)}"))
         except Exception as e:
-            self.result_queue.put(("error", f"[未知错误] 下载失败: {str(e)}"))
             self.logger.error(f"[失败] 下载: {str(e)}")
-        self.update_progress(0, "[进度] 下载失败")
+            self.update_progress(0, "[进度] 下载失败")
+            error_msg = str(e)
+            if "ffmpeg" in error_msg.lower() or "FFmpeg" in error_msg:
+                self.result_queue.put(("error", f"[失败] 下载: 需要ffmpeg但未安装。请安装并添加PATH。"))
+            elif 'yt_dlp.utils.DownloadError' in str(type(e)) or 'Network' in error_msg or '403' in error_msg:
+                self.result_queue.put(("error", f"[失败] 下载: 连接失败，网络问题或代理。"))
+            else:
+                self.result_queue.put(("error", f"[失败] 下载: {error_msg}"))
         finally:
             self.is_downloading = False
             self.ydl_instance = None
@@ -497,15 +482,16 @@ class YouTubeDownloaderApp:
                 del self.download_threads[task_id]
 
     def open_folder(self, path):
+        """打开下载文件夹"""
         try:
             if platform.system() == "Windows":
                 os.startfile(path)
-            elif platform.system() == "Darwin":
+            elif platform.system() == "Darwin":  # macOS
                 subprocess.run(["open", path])
-            else:
+            else:  # Linux
                 subprocess.run(["xdg-open", path])
         except Exception as e:
-            self.result_queue.put(("error", f"[打开文件夹失败]: {str(e)}"))
+            self.result_queue.put(("error", f"[错误] 打开文件夹失败: {str(e)}"))
 
     def _download_hook(self, d):
         if self.abort_all_tasks:
@@ -564,8 +550,8 @@ class YouTubeDownloaderApp:
 
     def load_download_history(self):
         try:
-            if os.path.exists(self.history_path):
-                with open(self.history_path, "r", encoding="utf-8") as f:
+            if os.path.exists("download_history.json"):
+                with open("download_history.json", "r", encoding="utf-8") as f:
                     self.download_history = json.load(f)
             else:
                 self.download_history = []
@@ -588,7 +574,7 @@ class YouTubeDownloaderApp:
             if len(self.download_history) > 100:
                 self.download_history = self.download_history[-100:]
 
-            with open(self.history_path, "w", encoding="utf-8") as f:
+            with open("download_history.json", "w", encoding="utf-8") as f:
                 json.dump(self.download_history, f, ensure_ascii=False, indent=2)
         except Exception as e:
             self.logger.error(f"[保存] 下载历史失败: {str(e)}")
@@ -664,7 +650,6 @@ class YouTubeDownloaderApp:
                 "-c:a", "aac",
                 "-strict", "experimental",
                 "-y",
-                "-progress", "pipe:1",  # 输出进度到stdout
                 output_file
             ]
 
@@ -675,15 +660,12 @@ class YouTubeDownloaderApp:
                 universal_newlines=True
             )
 
-            # 监控进度 (简化示例，实际可解析progress输出)
             while True:
-                output = process.stdout.readline()
+                output = process.stderr.readline()
                 if output == '' and process.poll() is not None:
                     break
                 if output:
-                    # 解析并更新UI进度 (示例)
-                    if 'progress' in output:
-                        self.result_queue.put(("info", f"[转码进度] {output.strip()}"))
+                    pass
 
             return_code = process.wait()
 
@@ -715,14 +697,14 @@ def show_splash_screen(root):
     y = (screen_height - 300) // 2
     splash.geometry(f"400x300+{x}+{y}")
 
-    label = tk.Label(splash, text="YouTube 下载器", font=('SimHei', 18, 'bold'), fg="red")
+    label = tk.Label(splash, text="YouTube 下载器", font=('Arial', 18, 'bold'), fg="red")
     label.pack(pady=20)
 
     progress = ttk.Progressbar(splash, orient='horizontal', mode='indeterminate', length=300)
     progress.pack(pady=20)
     progress.start(10)
 
-    status_label = tk.Label(splash, text="加载中...", font=('SimHei', 12))
+    status_label = tk.Label(splash, text="加载中...", font=('Arial', 12))
     status_label.pack()
 
     def close_splash():
