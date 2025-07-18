@@ -11,12 +11,6 @@ import json
 import subprocess
 import platform
 
-# Optional: For better themes, install ttkthemes if desired
-try:
-    from ttkthemes import ThemedStyle
-except ImportError:
-    ThemedStyle = None
-
 class YouTubeDownloaderApp:
     def __init__(self, root):
         self.root = root
@@ -31,17 +25,12 @@ class YouTubeDownloaderApp:
         y = (screen_height - 800) // 2
         self.root.geometry(f"1000x800+{x}+{y}")
 
-        # Apply a modern theme if ttkthemes is installed
-        if ThemedStyle:
-            style = ThemedStyle(self.root)
-            style.set_theme("arc")  # Or 'clam', 'equilux', etc. for a cleaner look
-
         # 设置中文字体支持
         self.style = ttk.Style()
-        self.style.configure('TLabel', font=('SimHei', 10), padding=5)
-        self.style.configure('TButton', font=('SimHei', 10), padding=5)
-        self.style.configure('TEntry', font=('SimHei', 10), padding=5)
-        self.style.configure('TCombobox', font=('SimHei', 10), padding=5)
+        self.style.configure('TLabel', font=('SimHei', 10))
+        self.style.configure('TButton', font=('SimHei', 10))
+        self.style.configure('TEntry', font=('SimHei', 10))
+        self.style.configure('TCombobox', font=('SimHei', 10))
 
         # 初始化变量
         self.download_queue = queue.Queue()
@@ -56,11 +45,6 @@ class YouTubeDownloaderApp:
 
         self.setup_logging()
 
-        # 默认路径设置为指定目录，并确保存在
-        default_path = "D:/360MoveData/"
-        os.makedirs(default_path, exist_ok=True)
-        self.save_path_var = tk.StringVar(value=default_path)
-
         self.create_widgets()
         
         self.load_download_history()
@@ -74,9 +58,23 @@ class YouTubeDownloaderApp:
         self.is_downloading = False
         self.download_threads = {}
 
+        # 设置光标默认焦点在URL输入框末尾
+        self.root.after(100, self.set_url_focus)
+
+    def set_url_focus(self):
+        self.url_entry.focus_set()
+        self.url_entry.icursor(tk.END)
+
     def setup_logging(self):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
+
+        # 添加文件日志处理器
+        file_handler = logging.FileHandler('app.log')
+        file_handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+        self.logger.addHandler(file_handler)
 
         class QueueHandler(logging.Handler):
             def __init__(self, log_queue):
@@ -88,7 +86,6 @@ class YouTubeDownloaderApp:
         
         self.result_queue = queue.Queue()
         self.log_handler = QueueHandler(self.result_queue)
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         self.log_handler.setFormatter(formatter)
         self.logger.addHandler(self.log_handler)
 
@@ -119,6 +116,7 @@ class YouTubeDownloaderApp:
         path_frame.pack(fill=tk.X, pady=5)
 
         ttk.Label(path_frame, text="路径:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.save_path_var = tk.StringVar(value="D:/360MoveData/")
         ttk.Entry(path_frame, textvariable=self.save_path_var, width=50).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
         ttk.Button(path_frame, text="浏览", command=self.browse_save_path).grid(row=0, column=2, padx=5)
 
@@ -185,6 +183,7 @@ class YouTubeDownloaderApp:
         self.log_text.tag_configure("progress", foreground="blue")
 
     def browse_save_path(self):
+        """浏览并选择保存路径"""
         path = filedialog.askdirectory()
         if path:
             self.save_path_var.set(path)
@@ -197,6 +196,7 @@ class YouTubeDownloaderApp:
             return False
 
     def fetch_video_info(self):
+        """获取视频信息并预览"""
         url = self.url_entry.get().strip()
         proxy = self.proxy_entry.get().strip() or None
 
@@ -251,6 +251,7 @@ class YouTubeDownloaderApp:
         threading.Thread(target=_fetch, daemon=True).start()
 
     def query_formats(self):
+        """查询视频格式"""
         url = self.url_entry.get().strip()
         proxy = self.proxy_entry.get().strip() or None
 
@@ -304,6 +305,7 @@ class YouTubeDownloaderApp:
                             (best_audio is None or int(f.get('abr', 0)) > int(best_audio.get('abr', 0)))):
                             best_audio = f
 
+                    # 默认最佳画质+最佳音质，避开N/A
                     if best_video and best_audio:
                         recommended_format = f"{best_video['format_id']}+{best_audio['format_id']}"
                         self.root.after(0, lambda: self.format_id_var.set(recommended_format))
@@ -316,6 +318,7 @@ class YouTubeDownloaderApp:
         threading.Thread(target=_query, daemon=True).start()
 
     def start_download(self):
+        """开始下载视频或音频"""
         urls = []
         single_url = self.url_entry.get().strip()
         multi_urls = self.urls_text.get(1.0, tk.END).strip().split('\n')
@@ -481,6 +484,15 @@ class YouTubeDownloaderApp:
             self.ydl_instance = yt_dlp.YoutubeDL(ydl_opts)
 
             # 开始下载
+            info_dict = self.ydl_instance.extract_info(url, download=False)
+
+            # 检查文件是否存在，避免覆盖
+            filename = ydl_opts['outtmpl'] % info_dict
+            if os.path.exists(filename):
+                filename = f"{os.path.splitext(filename)[0]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{os.path.splitext(filename)[1]}"
+                ydl_opts['outtmpl'] = filename
+                self.ydl_instance = yt_dlp.YoutubeDL(ydl_opts)  # 更新outtmpl
+
             info_dict = self.ydl_instance.extract_info(url, download=True)
 
             if self.abort_all_tasks:
@@ -588,8 +600,8 @@ class YouTubeDownloaderApp:
     def load_download_history(self):
         """加载下载历史"""
         try:
-            if os.path.exists(self.history_path):
-                with open(self.history_path, "r", encoding="utf-8") as f:
+            if os.path.exists("download_history.json"):
+                with open("download_history.json", "r", encoding="utf-8") as f:
                     self.download_history = json.load(f)
             else:
                 self.download_history = []
@@ -614,7 +626,7 @@ class YouTubeDownloaderApp:
             if len(self.download_history) > 100:
                 self.download_history = self.download_history[-100:]
             
-            with open(self.history_path, "w", encoding="utf-8") as f:
+            with open("download_history.json", "w", encoding="utf-8") as f:
                 json.dump(self.download_history, f, ensure_ascii=False, indent=2)
         except Exception as e:
             self.logger.error(f"保存下载历史失败: {str(e)}")
