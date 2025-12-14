@@ -128,7 +128,7 @@ class YouTubeDownloaderApp:
         options_frame.pack(fill=tk.X, pady=5)
 
         ttk.Label(options_frame, text="自定义格式ID:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.format_id_var = tk.StringVar(value="bv*+ba/b")
+        self.format_id_var = tk.StringVar(value="bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best")
         self.format_id_entry = ttk.Entry(options_frame, textvariable=self.format_id_var, width=15)
         self.format_id_entry.grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
         self.format_id_entry.bind("<Button-1>", self.reopen_formats_window)
@@ -261,9 +261,10 @@ class YouTubeDownloaderApp:
         def _query():
             try:
                 ydl_opts = {
-                    'socket_timeout': 10,
+                    'socket_timeout': 15,
                     'proxy': proxy,
-                    'quiet': True
+                    'quiet': True,
+                    'no_warnings': True
                 }
 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -273,24 +274,61 @@ class YouTubeDownloaderApp:
                 # 推荐格式ID：选择最高质量的视频和音频流进行合并
                 best_video = None
                 best_audio = None
+                best_combined = None
 
                 # 筛选出纯视频和纯音频格式
+                # 优先选择mp4格式的视频
                 video_formats = [f for f in formats if f.get('vcodec') != 'none' and f.get('acodec') == 'none' and f.get('height')]
+                # 优先选择m4a格式的音频
                 audio_formats = [f for f in formats if f.get('acodec') != 'none' and f.get('vcodec') == 'none' and f.get('abr')]
+                # 预合并的视频+音频格式
+                combined_formats = [f for f in formats if f.get('vcodec') != 'none' and f.get('acodec') != 'none' and f.get('height')]
 
-                # 按分辨率降序排序视频
+                # 按分辨率降序排序视频，优先考虑mp4格式
                 if video_formats:
-                    video_formats.sort(key=lambda f: f.get('height', 0), reverse=True)
-                    best_video = video_formats[0]
+                    # 先尝试找到mp4格式的视频
+                    mp4_videos = [f for f in video_formats if f.get('ext') == 'mp4']
+                    if mp4_videos:
+                        mp4_videos.sort(key=lambda f: (f.get('height', 0), f.get('fps', 0)), reverse=True)
+                        best_video = mp4_videos[0]
+                    else:
+                        # 如果没有mp4格式，选择其他格式中最高质量的
+                        video_formats.sort(key=lambda f: (f.get('height', 0), f.get('fps', 0)), reverse=True)
+                        best_video = video_formats[0]
 
-                # 按音频比特率降序排序音频
+                # 按音频比特率降序排序音频，优先考虑m4a格式
                 if audio_formats:
-                    audio_formats.sort(key=lambda f: f.get('abr', 0), reverse=True)
-                    best_audio = audio_formats[0]
+                    # 先尝试找到m4a格式的音频
+                    m4a_audios = [f for f in audio_formats if f.get('ext') == 'm4a']
+                    if m4a_audios:
+                        m4a_audios.sort(key=lambda f: (f.get('abr', 0), f.get('asr', 0)), reverse=True)
+                        best_audio = m4a_audios[0]
+                    else:
+                        # 如果没有m4a格式，选择其他格式中最高质量的
+                        audio_formats.sort(key=lambda f: (f.get('abr', 0), f.get('asr', 0)), reverse=True)
+                        best_audio = audio_formats[0]
+
+                # 查找最佳预合并格式
+                if combined_formats:
+                    combined_formats.sort(key=lambda f: (f.get('height', 0), f.get('fps', 0), f.get('abr', 0)), reverse=True)
+                    best_combined = combined_formats[0]
 
                 recommended_format = None
+                # 优先推荐视频+音频组合格式
                 if best_video and best_audio:
                     recommended_format = f"{best_video['format_id']}+{best_audio['format_id']}"
+                # 如果没有找到合适的组合，使用最佳预合并格式
+                elif best_combined:
+                    recommended_format = best_combined['format_id']
+                # 如果只有视频格式可用
+                elif best_video:
+                    recommended_format = best_video['format_id']
+                # 如果只有音频格式可用
+                elif best_audio:
+                    recommended_format = best_audio['format_id']
+                # 兜底方案
+                else:
+                    recommended_format = "best"
 
                 # 将结构化数据和推荐格式一起传递
                 self.result_queue.put(("formats_queried", (info_dict.get('title', '未知标题'), formats, recommended_format)))
@@ -499,8 +537,18 @@ class YouTubeDownloaderApp:
             error_msg = str(e)
             if "ffmpeg" in error_msg.lower() or "FFmpeg" in error_msg:
                 self.result_queue.put(("error", f"下载失败: 需要ffmpeg但未安装。请安装ffmpeg并确保其在系统PATH中。"))
-            elif 'yt_dlp.utils.DownloadError' in str(type(e)) or 'Network' in error_msg or '403' in error_msg:
-                self.result_queue.put(("error", "连接 YouTube 失败，可能是网络限制或无代理所致。"))
+            elif 'yt_dlp.utils.DownloadError' in str(type(e)) or 'Network' in error_msg or '403' in error_msg or "Sign in to confirm you're not a bot" in error_msg:
+                self.result_queue.put(("error", "连接 YouTube 失败，可能是网络限制、代理问题或需要身份验证。请检查代理设置，或尝试使用浏览器cookies。"))
+            elif "Requested format is not available" in error_msg or "Format not available" in error_msg:
+                self.result_queue.put(("error", "所选格式不可用。请点击'查询格式'按钮查看可用格式，或使用推荐格式。"))
+            elif "format" in error_msg.lower() and ("not available" in error_msg.lower() or "invalid" in error_msg.lower()):
+                self.result_queue.put(("error", "格式选择无效。请点击'查询格式'按钮查看可用格式，或使用默认推荐格式。"))
+            elif "banned" in error_msg.lower() or "copyright" in error_msg.lower():
+                self.result_queue.put(("error", "下载失败: 该视频可能受到版权保护或被地区限制。"))
+            elif "timeout" in error_msg.lower():
+                self.result_queue.put(("error", "下载失败: 网络超时。请检查网络连接或增加代理超时时间。"))
+            elif "not found" in error_msg.lower() or "404" in error_msg:
+                self.result_queue.put(("error", "下载失败: 视频未找到。请检查链接是否正确。"))
             else:
                 self.result_queue.put(("error", f"下载失败: {error_msg}"))
         finally:
