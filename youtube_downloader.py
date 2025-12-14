@@ -102,6 +102,38 @@ class YouTubeDownloaderApp:
         self.proxy_entry = ttk.Entry(url_frame, width=60)
         self.proxy_entry.grid(row=2, column=1, sticky=tk.W, pady=5, padx=5)
         self.proxy_entry.insert(0, "http://127.0.0.1:7897")
+        
+        # Cookies设置
+        cookie_frame = ttk.Frame(url_frame)
+        cookie_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=5, padx=5)
+        
+        self.use_cookies_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(cookie_frame, text="使用Cookies (解决人机验证)", variable=self.use_cookies_var, command=self.toggle_cookies_options).grid(row=0, column=0, sticky=tk.W, pady=5)
+        
+        self.cookies_source_var = tk.StringVar(value="browser")
+        self.cookie_browser_var = tk.StringVar(value="chrome")
+        self.cookie_file_path = tk.StringVar(value="")
+        
+        # Cookies选项框架（默认隐藏）
+        self.cookies_options_frame = ttk.Frame(cookie_frame)
+        
+        ttk.Label(self.cookies_options_frame, text="Cookies来源:").grid(row=0, column=0, sticky=tk.W, pady=3, padx=(15, 5))
+        
+        # 浏览器选项
+        browser_radio = ttk.Radiobutton(self.cookies_options_frame, text="从浏览器提取", variable=self.cookies_source_var, value="browser", command=self.toggle_cookies_options)
+        browser_radio.grid(row=0, column=1, sticky=tk.W, pady=3, padx=5)
+        
+        self.browser_combobox = ttk.Combobox(self.cookies_options_frame, textvariable=self.cookie_browser_var, values=["chrome", "firefox", "edge", "safari", "opera"], width=10)
+        self.browser_combobox.grid(row=0, column=2, sticky=tk.W, pady=3, padx=5)
+        
+        # Cookie文件选项
+        file_radio = ttk.Radiobutton(self.cookies_options_frame, text="使用Cookie文件", variable=self.cookies_source_var, value="file", command=self.toggle_cookies_options)
+        file_radio.grid(row=0, column=3, sticky=tk.W, pady=3, padx=15)
+        
+        self.cookie_file_entry = ttk.Entry(self.cookies_options_frame, textvariable=self.cookie_file_path, width=30)
+        self.cookie_file_entry.grid(row=0, column=4, sticky=tk.W, pady=3, padx=5)
+        
+        ttk.Button(self.cookies_options_frame, text="浏览", command=self.browse_cookie_file).grid(row=0, column=5, padx=5)
 
         path_frame = ttk.LabelFrame(main_frame, text="保存路径", padding=10)
         path_frame.pack(fill=tk.X, pady=5)
@@ -184,6 +216,22 @@ class YouTubeDownloaderApp:
         path = filedialog.askdirectory()
         if path:
             self.save_path_var.set(path)
+    
+    def toggle_cookies_options(self):
+        """切换Cookies选项的显示/隐藏"""
+        if self.use_cookies_var.get():
+            self.cookies_options_frame.grid(row=1, column=0, columnspan=6, sticky=tk.W, pady=5)
+        else:
+            self.cookies_options_frame.grid_remove()
+    
+    def browse_cookie_file(self):
+        """浏览并选择Cookie文件"""
+        file_path = filedialog.askopenfilename(
+            title="选择Cookie文件",
+            filetypes=[("JSON文件", "*.json"), ("所有文件", "*.*")]
+        )
+        if file_path:
+            self.cookie_file_path.set(file_path)
 
     def validate_url(self, url):
         try:
@@ -210,6 +258,15 @@ class YouTubeDownloaderApp:
                     'proxy': proxy,
                     'quiet': True
                 }
+                
+                # 添加Cookies配置
+                if self.use_cookies_var.get():
+                    if self.cookies_source_var.get() == 'browser':
+                        ydl_opts['cookies_from_browser'] = self.cookie_browser_var.get()
+                    else:
+                        cookie_file = self.cookie_file_path.get().strip()
+                        if cookie_file and os.path.exists(cookie_file):
+                            ydl_opts['cookies'] = cookie_file
 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info_dict = ydl.extract_info(url, download=False)
@@ -266,6 +323,15 @@ class YouTubeDownloaderApp:
                     'quiet': True,
                     'no_warnings': True
                 }
+                
+                # 添加Cookies配置
+                if self.use_cookies_var.get():
+                    if self.cookies_source_var.get() == 'browser':
+                        ydl_opts['cookies_from_browser'] = self.cookie_browser_var.get()
+                    else:
+                        cookie_file = self.cookie_file_path.get().strip()
+                        if cookie_file and os.path.exists(cookie_file):
+                            ydl_opts['cookies'] = cookie_file
 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info_dict = ydl.extract_info(url, download=False)
@@ -485,6 +551,15 @@ class YouTubeDownloaderApp:
                 'writeautomaticsub': download_subtitles,
                 'subtitleslangs': ['en', 'zh-Hans', 'zh-Hant'],  # 下载多种语言字幕
             }
+            
+            # 添加Cookies配置
+            if self.use_cookies_var.get():
+                if self.cookies_source_var.get() == 'browser':
+                    ydl_opts['cookies_from_browser'] = self.cookie_browser_var.get()
+                else:
+                    cookie_file = self.cookie_file_path.get().strip()
+                    if cookie_file and os.path.exists(cookie_file):
+                        ydl_opts['cookies'] = cookie_file
 
             # 如果是音频下载，添加音频处理选项
             if is_audio:
